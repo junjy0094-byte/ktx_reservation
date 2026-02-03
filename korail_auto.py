@@ -10,17 +10,19 @@ PyAutoGUI를 사용한 OS 레벨 자동화 (자동화 감지 완전 우회)
 """
 
 import time
+import random
 import yaml
 import pyautogui
 import pyperclip
 import subprocess
 import platform
 from datetime import datetime
+from PIL import ImageGrab
 
 
 # PyAutoGUI 안전 설정
 pyautogui.FAILSAFE = True  # 마우스를 화면 모서리로 이동하면 중단
-pyautogui.PAUSE = 0.5  # 각 동작 사이 대기 시간
+pyautogui.PAUSE = 0.1  # 각 동작 사이 대기 시간 (빠른 클릭을 위해 줄임)
 
 
 class KorailAutoGUI:
@@ -28,11 +30,92 @@ class KorailAutoGUI:
 
     def __init__(self, config_path: str = "config.yaml"):
         self.config = self._load_config(config_path)
+        self.last_screenshot = None
 
     def _load_config(self, config_path: str) -> dict:
         """설정 파일 로드"""
         with open(config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
+
+    def random_delay(self, min_sec: float = 2.0, max_sec: float = 4.0):
+        """랜덤 대기 시간"""
+        delay = random.uniform(min_sec, max_sec)
+        time.sleep(delay)
+        return delay
+
+    def take_screenshot(self):
+        """현재 화면 스크린샷"""
+        return ImageGrab.grab()
+
+    def compare_screenshots(self, img1, img2, threshold: float = 0.95) -> bool:
+        """
+        두 스크린샷 비교
+
+        Returns:
+            bool: True면 화면이 거의 동일 (변화 없음), False면 화면이 변경됨
+        """
+        if img1 is None or img2 is None:
+            return False
+
+        try:
+            # 이미지 크기가 다르면 다른 것으로 판단
+            if img1.size != img2.size:
+                return False
+
+            # 픽셀 비교 (샘플링)
+            pixels1 = list(img1.getdata())
+            pixels2 = list(img2.getdata())
+
+            # 샘플링으로 빠르게 비교
+            sample_size = min(10000, len(pixels1))
+            sample_indices = random.sample(range(len(pixels1)), sample_size)
+
+            matches = 0
+            for idx in sample_indices:
+                if pixels1[idx] == pixels2[idx]:
+                    matches += 1
+
+            similarity = matches / sample_size
+            return similarity >= threshold
+
+        except Exception:
+            return False
+
+    def check_screen_changed(self, before_screenshot) -> bool:
+        """
+        화면이 변경되었는지 확인
+
+        Args:
+            before_screenshot: 이전 스크린샷
+
+        Returns:
+            bool: True면 화면이 변경됨 (예매 페이지로 이동 등)
+        """
+        time.sleep(0.5)  # 화면 변화 대기
+        after_screenshot = self.take_screenshot()
+
+        # 화면이 동일하면 False, 다르면 True
+        is_same = self.compare_screenshots(before_screenshot, after_screenshot)
+        return not is_same
+
+    def check_reservation_success(self, before_screenshot) -> bool:
+        """
+        예매 성공 여부 확인
+
+        Args:
+            before_screenshot: 예매 버튼 클릭 전 스크린샷
+
+        Returns:
+            bool: 예매 성공 여부
+        """
+        # 방법 1: 화면 변화 감지
+        screen_changed = self.check_screen_changed(before_screenshot)
+
+        if screen_changed:
+            print("[INFO] 화면 변화 감지됨!")
+            return True
+
+        return False
 
     def open_korail_website(self):
         """코레일 웹사이트 열기"""
@@ -55,45 +138,9 @@ class KorailAutoGUI:
         pyautogui.hotkey('ctrl', 'v')
         time.sleep(0.3)
 
-    def find_and_click(self, image_path: str, confidence: float = 0.8, timeout: int = 10) -> bool:
-        """
-        화면에서 이미지를 찾아 클릭
-
-        Args:
-            image_path: 찾을 이미지 파일 경로
-            confidence: 매칭 정확도 (0-1)
-            timeout: 최대 대기 시간 (초)
-
-        Returns:
-            bool: 성공 여부
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                location = pyautogui.locateOnScreen(image_path, confidence=confidence)
-                if location:
-                    center = pyautogui.center(location)
-                    pyautogui.click(center)
-                    return True
-            except Exception:
-                pass
-            time.sleep(0.5)
-        return False
-
-    def click_at_position(self, x: int, y: int):
-        """특정 좌표 클릭"""
+    def fast_click(self, x: int, y: int):
+        """빠른 클릭 (최소 대기)"""
         pyautogui.click(x, y)
-        time.sleep(0.3)
-
-    def refresh_page(self):
-        """페이지 새로고침 (F5)"""
-        pyautogui.press('f5')
-        time.sleep(2)
-
-    def scroll_down(self, clicks: int = 3):
-        """페이지 스크롤"""
-        pyautogui.scroll(-clicks)
-        time.sleep(0.5)
 
     def wait_for_user_setup(self):
         """사용자가 브라우저 설정을 완료할 때까지 대기"""
@@ -118,85 +165,137 @@ class KorailAutoGUI:
         input("준비가 완료되면 Enter를 눌러주세요...")
         print()
 
-    def check_seat_availability_manual(self) -> bool:
-        """
-        사용자에게 좌석 상태 확인 요청
-
-        Returns:
-            bool: 예약 가능 여부
-        """
-        print("\n[확인] 현재 화면에서 예약 가능한 좌석이 있나요?")
-        response = input("예약 가능하면 'y', 없으면 'n' 입력: ").strip().lower()
-        return response == 'y'
-
     def run_with_coordinates(self):
         """좌표 기반 자동화 실행 (사용자가 좌표 설정)"""
         self.wait_for_user_setup()
 
         print("\n[ 좌표 설정 ]")
-        print("예약하기 버튼의 좌표를 설정해야 합니다.")
+        print("각 버튼의 좌표를 설정합니다.")
         print()
 
-        # 조회하기 버튼 좌표 설정
+        # 1. 조회하기 버튼 좌표 설정
         print("1. '조회하기' 버튼 위에 마우스를 올려놓고 Enter를 누르세요...")
         input()
         search_btn_pos = pyautogui.position()
-        print(f"   -> 조회하기 버튼 좌표: {search_btn_pos}")
+        print(f"   -> 조회하기 버튼 좌표: ({search_btn_pos.x}, {search_btn_pos.y})")
 
+        # 2. 예약하기 버튼 좌표 설정
         print()
-        print("2. 첫 번째 열차의 '예약하기' 버튼(일반실) 위에 마우스를 올려놓고 Enter를 누르세요...")
+        print("2. 원하는 열차의 '예약하기' 버튼(일반실) 위에 마우스를 올려놓고 Enter를 누르세요...")
         input()
         reserve_btn_pos = pyautogui.position()
-        print(f"   -> 예약하기 버튼 좌표: {reserve_btn_pos}")
+        print(f"   -> 예약하기 버튼 좌표: ({reserve_btn_pos.x}, {reserve_btn_pos.y})")
+
+        # 3. 예매 버튼 좌표 설정 (예약하기 클릭 후 나오는 팝업/페이지의 예매 버튼)
+        print()
+        print("3. '예약하기' 버튼을 한번 클릭해서 예매 확인 화면을 띄워주세요.")
+        print("   그 다음 '예매' 또는 '결제하기' 버튼 위에 마우스를 올려놓고 Enter를 누르세요...")
+        input()
+        confirm_btn_pos = pyautogui.position()
+        print(f"   -> 예매 버튼 좌표: ({confirm_btn_pos.x}, {confirm_btn_pos.y})")
 
         print()
         print("=" * 60)
-        print(f"  설정 완료!")
+        print("  좌표 설정 완료!")
         print(f"  조회하기 버튼: ({search_btn_pos.x}, {search_btn_pos.y})")
         print(f"  예약하기 버튼: ({reserve_btn_pos.x}, {reserve_btn_pos.y})")
+        print(f"  예매 버튼:     ({confirm_btn_pos.x}, {confirm_btn_pos.y})")
         print("=" * 60)
         print()
 
         # 예약 설정
-        refresh_interval = self.config['reservation']['refresh_interval']
         max_attempts = self.config['reservation']['max_attempts']
 
-        print(f"[INFO] 새로고침 간격: {refresh_interval}초")
         print(f"[INFO] 최대 시도 횟수: {max_attempts}회")
+        print(f"[INFO] 새로고침 간격: 2~4초 (랜덤)")
+        print()
+        print("[ 동작 순서 ]")
+        print("1. 조회하기 클릭 → 2. 예약하기 클릭 → 3. 예매 버튼 클릭")
+        print("4. 화면 변화 확인 → 5. 성공 시 종료, 실패 시 반복")
         print()
         input("자동 예약을 시작하려면 Enter를 누르세요...")
         print()
 
         # 자동 예약 루프
         attempt = 0
-        while attempt < max_attempts:
+        reservation_success = False
+
+        while attempt < max_attempts and not reservation_success:
             attempt += 1
             current_time = datetime.now().strftime('%H:%M:%S')
-            print(f"[{current_time}] 시도 {attempt}/{max_attempts}", end=" - ")
+            print(f"\n[{current_time}] === 시도 {attempt}/{max_attempts} ===")
 
             try:
-                # 예약하기 버튼 클릭 시도
-                pyautogui.click(reserve_btn_pos.x, reserve_btn_pos.y)
-                time.sleep(1)
+                # Step 1: 조회하기 버튼 클릭
+                print("  [1/4] 조회하기 클릭...", end=" ")
+                self.fast_click(search_btn_pos.x, search_btn_pos.y)
+                time.sleep(1.5)  # 조회 결과 로딩 대기
+                print("완료")
 
-                # 화면 변화 확인 (간단한 방법: 사용자에게 확인)
-                # 실제로는 화면 캡처 후 비교하는 방식 사용 가능
+                # Step 2: 예약하기 버튼 클릭 (빠르게)
+                print("  [2/4] 예약하기 클릭...", end=" ")
+                before_reserve = self.take_screenshot()
+                self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
+                time.sleep(0.3)  # 최소 대기
+                print("완료")
 
-                print("클릭 완료")
+                # Step 3: 예매 버튼 클릭 (빠르게)
+                print("  [3/4] 예매 버튼 클릭...", end=" ")
+                before_confirm = self.take_screenshot()
+                self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
+                time.sleep(0.5)
+                print("완료")
 
-                # 새로고침 (조회하기 버튼 클릭)
-                time.sleep(refresh_interval)
-                pyautogui.click(search_btn_pos.x, search_btn_pos.y)
-                time.sleep(2)
+                # Step 4: 예매 성공 확인
+                print("  [4/4] 예매 성공 확인 중...", end=" ")
+                if self.check_reservation_success(before_confirm):
+                    print("화면 변화 감지!")
+
+                    # 추가 확인: 사용자에게 물어봄
+                    print()
+                    print("=" * 60)
+                    print("  [확인] 예매가 성공한 것 같습니다!")
+                    print("  화면을 확인해주세요.")
+                    print("=" * 60)
+
+                    response = input("예매 성공했나요? (y/n): ").strip().lower()
+                    if response == 'y':
+                        reservation_success = True
+                        print()
+                        print("*" * 60)
+                        print("  축하합니다! 예매 성공!")
+                        print("  결제를 진행해주세요.")
+                        print("*" * 60)
+
+                        # 알림음
+                        if self.config.get('notification', {}).get('sound', False):
+                            for _ in range(5):
+                                print('\a', end='', flush=True)
+                                time.sleep(0.3)
+                        break
+                    else:
+                        print("[INFO] 계속 시도합니다...")
+                else:
+                    print("변화 없음 (좌석 없음)")
+
+                # 랜덤 대기 (2~4초)
+                delay = self.random_delay(2.0, 4.0)
+                print(f"  [대기] {delay:.1f}초 후 재시도...")
 
             except pyautogui.FailSafeException:
                 print("\n[중단] 안전장치 작동 - 마우스가 화면 모서리로 이동됨")
                 break
+            except KeyboardInterrupt:
+                print("\n[중단] 사용자 중단 (Ctrl+C)")
+                break
             except Exception as e:
-                print(f"오류: {e}")
-                time.sleep(refresh_interval)
+                print(f"\n[오류] {e}")
+                self.random_delay(2.0, 4.0)
 
-        print("\n[INFO] 자동 예약 종료")
+        if not reservation_success:
+            print("\n[INFO] 자동 예약 종료 (성공하지 못함)")
+
+        print("\n프로그램을 종료합니다.")
 
     def run_simple_refresh(self):
         """단순 새로고침 모드 (가장 간단한 방식)"""
@@ -207,10 +306,9 @@ class KorailAutoGUI:
         print("예약 가능한 좌석이 보이면 직접 클릭하세요!")
         print()
 
-        refresh_interval = self.config['reservation']['refresh_interval']
         max_attempts = self.config['reservation']['max_attempts']
 
-        print(f"새로고침 간격: {refresh_interval}초")
+        print(f"새로고침 간격: 2~4초 (랜덤)")
         print()
         input("시작하려면 Enter를 누르세요...")
         print()
@@ -219,11 +317,11 @@ class KorailAutoGUI:
         while attempt < max_attempts:
             attempt += 1
             current_time = datetime.now().strftime('%H:%M:%S')
-            print(f"[{current_time}] 새로고침 {attempt}/{max_attempts}")
 
             try:
                 pyautogui.press('f5')
-                time.sleep(refresh_interval)
+                delay = self.random_delay(2.0, 4.0)
+                print(f"[{current_time}] 새로고침 {attempt}/{max_attempts} (다음까지 {delay:.1f}초)")
 
             except pyautogui.FailSafeException:
                 print("\n[중단] 안전장치 작동")
