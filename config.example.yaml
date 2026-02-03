@@ -1,0 +1,29 @@
+# 코레일 취소표 예약 설정 파일
+# 이 파일을 config.yaml로 복사한 후 실제 값을 입력하세요
+
+# 코레일 로그인 정보
+login:
+  id: "your_korail_id"           # 코레일 멤버십 번호 또는 이메일
+  password: "your_password"       # 비밀번호
+
+# 여정 정보
+journey:
+  departure_station: "서울"       # 출발역
+  arrival_station: "부산"         # 도착역
+  date: "2024-12-25"             # 출발 날짜 (YYYY-MM-DD)
+  time: "08:00"                  # 희망 출발 시간 (HH:MM)
+
+# 좌석 옵션
+seat:
+  type: "general"                # general(일반실) 또는 special(특실)
+  passengers: 1                  # 승객 수
+
+# 예약 설정
+reservation:
+  refresh_interval: 3            # 새로고침 간격 (초)
+  max_attempts: 1000             # 최대 시도 횟수
+  time_range_hours: 2            # 희망 시간 기준 전후 범위 (시간)
+
+# 알림 설정 (선택사항)
+notification:
+  sound: true                    # 예약 성공시 소리 알림
