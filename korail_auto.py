@@ -179,16 +179,36 @@ class KorailAutoGUI:
         search_btn_pos = pyautogui.position()
         print(f"   -> 조회하기 버튼 좌표: ({search_btn_pos.x}, {search_btn_pos.y})")
 
-        # 2. 예약하기 버튼 좌표 설정
+        # 2. 예약하기 버튼 좌표 설정 (여러 개 가능)
         print()
-        print("2. 원하는 열차의 '예약하기' 버튼(일반실) 위에 마우스를 올려놓고 Enter를 누르세요...")
-        input()
-        reserve_btn_pos = pyautogui.position()
-        print(f"   -> 예약하기 버튼 좌표: ({reserve_btn_pos.x}, {reserve_btn_pos.y})")
+        print("2. 예약하기 버튼을 설정합니다. (여러 열차 시간대 선택 가능)")
+        print("   원하는 열차들의 '예약하기' 버튼을 순서대로 등록합니다.")
+        print()
+
+        reserve_btn_positions = []
+        train_num = 1
+
+        while True:
+            print(f"   [{train_num}번째 열차] 예약하기 버튼 위에 마우스를 올려놓고 Enter")
+            print(f"   (등록 완료하려면 'q' 입력 후 Enter): ", end="")
+            user_input = input().strip().lower()
+
+            if user_input == 'q':
+                if len(reserve_btn_positions) == 0:
+                    print("   [경고] 최소 1개의 예약하기 버튼을 등록해야 합니다!")
+                    continue
+                break
+
+            pos = pyautogui.position()
+            reserve_btn_positions.append(pos)
+            print(f"   -> {train_num}번 열차 예약하기 버튼: ({pos.x}, {pos.y})")
+            train_num += 1
+
+        print(f"\n   총 {len(reserve_btn_positions)}개의 열차 등록 완료!")
 
         # 3. 예매 버튼 좌표 설정 (예약하기 클릭 후 나오는 팝업/페이지의 예매 버튼)
         print()
-        print("3. '예약하기' 버튼을 한번 클릭해서 예매 확인 화면을 띄워주세요.")
+        print("3. 아무 '예약하기' 버튼을 한번 클릭해서 예매 확인 화면을 띄워주세요.")
         print("   그 다음 '예매' 또는 '결제하기' 버튼 위에 마우스를 올려놓고 Enter를 누르세요...")
         input()
         confirm_btn_pos = pyautogui.position()
@@ -198,7 +218,9 @@ class KorailAutoGUI:
         print("=" * 60)
         print("  좌표 설정 완료!")
         print(f"  조회하기 버튼: ({search_btn_pos.x}, {search_btn_pos.y})")
-        print(f"  예약하기 버튼: ({reserve_btn_pos.x}, {reserve_btn_pos.y})")
+        print(f"  예약하기 버튼: {len(reserve_btn_positions)}개 등록")
+        for i, pos in enumerate(reserve_btn_positions, 1):
+            print(f"    - {i}번 열차: ({pos.x}, {pos.y})")
         print(f"  예매 버튼:     ({confirm_btn_pos.x}, {confirm_btn_pos.y})")
         print("=" * 60)
         print()
@@ -208,10 +230,13 @@ class KorailAutoGUI:
 
         print(f"[INFO] 최대 시도 횟수: {max_attempts}회")
         print(f"[INFO] 새로고침 간격: 2~4초 (랜덤)")
+        print(f"[INFO] 등록된 열차: {len(reserve_btn_positions)}개 (순서대로 시도)")
         print()
         print("[ 동작 순서 ]")
-        print("1. 조회하기 클릭 → 2. 예약하기 클릭 → 3. 예매 버튼 클릭")
-        print("4. 화면 변화 확인 → 5. 성공 시 종료, 실패 시 반복")
+        print("1. 조회하기 클릭")
+        print("2. 각 열차별 예약하기 → 예매 버튼 순서대로 시도")
+        print("3. 화면 변화 확인 → 성공 시 종료, 실패 시 다음 열차 시도")
+        print("4. 모든 열차 실패 시 새로고침 후 반복")
         print()
         input("자동 예약을 시작하려면 Enter를 누르세요...")
         print()
@@ -227,60 +252,68 @@ class KorailAutoGUI:
 
             try:
                 # Step 1: 조회하기 버튼 클릭
-                print("  [1/4] 조회하기 클릭...", end=" ")
+                print("  [1] 조회하기 클릭...", end=" ")
                 self.fast_click(search_btn_pos.x, search_btn_pos.y)
                 time.sleep(1.5)  # 조회 결과 로딩 대기
                 print("완료")
 
-                # Step 2: 예약하기 버튼 클릭 (빠르게)
-                print("  [2/4] 예약하기 클릭...", end=" ")
-                before_reserve = self.take_screenshot()
-                self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
-                time.sleep(0.3)  # 최소 대기
-                print("완료")
+                # Step 2: 각 열차별로 예약 시도
+                for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
+                    print(f"  [2-{train_idx}] {train_idx}번 열차 예약하기 클릭...", end=" ")
+                    self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
+                    time.sleep(0.3)  # 최소 대기
+                    print("완료")
 
-                # Step 3: 예매 버튼 클릭 (빠르게)
-                print("  [3/4] 예매 버튼 클릭...", end=" ")
-                before_confirm = self.take_screenshot()
-                self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
-                time.sleep(0.5)
-                print("완료")
+                    # Step 3: 예매 버튼 클릭 (빠르게)
+                    print(f"  [3-{train_idx}] 예매 버튼 클릭...", end=" ")
+                    before_confirm = self.take_screenshot()
+                    self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
+                    time.sleep(0.5)
+                    print("완료")
 
-                # Step 4: 예매 성공 확인
-                print("  [4/4] 예매 성공 확인 중...", end=" ")
-                if self.check_reservation_success(before_confirm):
-                    print("화면 변화 감지!")
+                    # Step 4: 예매 성공 확인
+                    print(f"  [4-{train_idx}] 예매 성공 확인 중...", end=" ")
+                    if self.check_reservation_success(before_confirm):
+                        print("화면 변화 감지!")
 
-                    # 추가 확인: 사용자에게 물어봄
-                    print()
-                    print("=" * 60)
-                    print("  [확인] 예매가 성공한 것 같습니다!")
-                    print("  화면을 확인해주세요.")
-                    print("=" * 60)
-
-                    response = input("예매 성공했나요? (y/n): ").strip().lower()
-                    if response == 'y':
-                        reservation_success = True
+                        # 추가 확인: 사용자에게 물어봄
                         print()
-                        print("*" * 60)
-                        print("  축하합니다! 예매 성공!")
-                        print("  결제를 진행해주세요.")
-                        print("*" * 60)
+                        print("=" * 60)
+                        print(f"  [확인] {train_idx}번 열차 예매가 성공한 것 같습니다!")
+                        print("  화면을 확인해주세요.")
+                        print("=" * 60)
 
-                        # 알림음
-                        if self.config.get('notification', {}).get('sound', False):
-                            for _ in range(5):
-                                print('\a', end='', flush=True)
-                                time.sleep(0.3)
-                        break
+                        response = input("예매 성공했나요? (y/n): ").strip().lower()
+                        if response == 'y':
+                            reservation_success = True
+                            print()
+                            print("*" * 60)
+                            print(f"  축하합니다! {train_idx}번 열차 예매 성공!")
+                            print("  결제를 진행해주세요.")
+                            print("*" * 60)
+
+                            # 알림음
+                            if self.config.get('notification', {}).get('sound', False):
+                                for _ in range(5):
+                                    print('\a', end='', flush=True)
+                                    time.sleep(0.3)
+                            break
+                        else:
+                            print(f"[INFO] {train_idx}번 열차 실패, 다음 열차 시도...")
                     else:
-                        print("[INFO] 계속 시도합니다...")
-                else:
-                    print("변화 없음 (좌석 없음)")
+                        print("변화 없음 (좌석 없음)")
 
-                # 랜덤 대기 (2~4초)
+                    # 다음 열차 시도 전 짧은 대기
+                    if train_idx < len(reserve_btn_positions):
+                        time.sleep(0.2)
+
+                # 예약 성공했으면 루프 종료
+                if reservation_success:
+                    break
+
+                # 모든 열차 실패 시 랜덤 대기 후 재시도
                 delay = self.random_delay(2.0, 4.0)
-                print(f"  [대기] {delay:.1f}초 후 재시도...")
+                print(f"  [대기] 모든 열차 실패. {delay:.1f}초 후 재시도...")
 
             except pyautogui.FailSafeException:
                 print("\n[중단] 안전장치 작동 - 마우스가 화면 모서리로 이동됨")
