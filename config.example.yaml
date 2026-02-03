@@ -24,6 +24,10 @@ reservation:
   max_attempts: 1000             # 최대 시도 횟수
   time_range_hours: 2            # 희망 시간 기준 전후 범위 (시간)
 
+# 브라우저 설정
+browser:
+  use_existing_profile: false    # true: 기존 Chrome 프로필 사용 (로그인 유지됨)
+
 # 알림 설정 (선택사항)
 notification:
   sound: true                    # 예약 성공시 소리 알림

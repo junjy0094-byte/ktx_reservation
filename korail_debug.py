@@ -1,17 +1,22 @@
 """
 코레일 KTX 취소표 자동 예약 프로그램
-undetected-chromedriver를 사용하여 자동화 감지 우회
+디버그 모드로 실행된 Chrome에 연결하는 방식 (자동화 감지 우회)
+
+사용법:
+1. 먼저 Chrome을 디버그 모드로 실행 (start_chrome.bat 또는 start_chrome.sh 실행)
+2. 그 다음 이 스크립트 실행: python korail_debug.py
 """
 
 import time
 import yaml
 from datetime import datetime
 
-import undetected_chromedriver as uc
+from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
+from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException,
@@ -19,45 +24,23 @@ from selenium.common.exceptions import (
 )
 
 
-class KorailReservation:
-    """코레일 KTX 예약 자동화 클래스"""
+class KorailReservationDebug:
+    """디버그 모드 Chrome에 연결하여 예약하는 클래스"""
 
     KORAIL_URL = "https://www.korail.com/"
     KORAIL_LOGIN_URL = "https://www.korail.com/ticket/login/loginForm.do"
     KORAIL_SEARCH_URL = "https://www.korail.com/ticket/main/mainForm.do"
 
-    # 역 코드 매핑 (주요 역)
-    STATION_CODES = {
-        "서울": "0001",
-        "용산": "0015",
-        "영등포": "0020",
-        "광명": "0502",
-        "수원": "0061",
-        "천안아산": "0502",
-        "오송": "0297",
-        "대전": "0010",
-        "김천구미": "0507",
-        "동대구": "0015",
-        "경주": "0508",
-        "울산": "0509",
-        "부산": "0020",
-        "포항": "0515",
-        "익산": "0030",
-        "광주송정": "0036",
-        "목포": "0041",
-        "여수엑스포": "0059",
-        "전주": "0045",
-        "강릉": "0115",
-    }
-
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", debug_port: int = 9222):
         """
         초기화
 
         Args:
             config_path: 설정 파일 경로
+            debug_port: Chrome 디버그 포트 (기본값: 9222)
         """
         self.config = self._load_config(config_path)
+        self.debug_port = debug_port
         self.driver = None
         self.wait = None
 
@@ -66,129 +49,39 @@ class KorailReservation:
         with open(config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
 
-    def _get_chrome_version(self) -> int:
-        """설치된 Chrome 브라우저 버전 감지"""
-        import subprocess
-        import re
-        import platform
-
-        version = None
-        try:
-            if platform.system() == "Windows":
-                # Windows: 레지스트리에서 버전 확인
-                import winreg
-                try:
-                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                         r"Software\Google\Chrome\BLBeacon")
-                    version_str, _ = winreg.QueryValueEx(key, "version")
-                    version = int(version_str.split('.')[0])
-                except:
-                    # PowerShell로 시도
-                    result = subprocess.run(
-                        ['powershell', '-command',
-                         '(Get-Item "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe").VersionInfo.FileVersion'],
-                        capture_output=True, text=True
-                    )
-                    if result.returncode == 0:
-                        version = int(result.stdout.strip().split('.')[0])
-            elif platform.system() == "Darwin":
-                # macOS
-                result = subprocess.run(
-                    ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version'],
-                    capture_output=True, text=True
-                )
-                match = re.search(r'(\d+)\.', result.stdout)
-                if match:
-                    version = int(match.group(1))
-            else:
-                # Linux
-                result = subprocess.run(['google-chrome', '--version'],
-                                        capture_output=True, text=True)
-                match = re.search(r'(\d+)\.', result.stdout)
-                if match:
-                    version = int(match.group(1))
-        except Exception as e:
-            print(f"[WARNING] Chrome 버전 감지 실패: {e}")
-
-        return version
-
-    def _get_chrome_user_data_dir(self) -> str:
-        """Chrome 사용자 데이터 디렉토리 경로 반환"""
-        import platform
-        import os
-
-        if platform.system() == "Windows":
-            return os.path.join(os.environ['LOCALAPPDATA'], 'Google', 'Chrome', 'User Data')
-        elif platform.system() == "Darwin":
-            return os.path.expanduser('~/Library/Application Support/Google/Chrome')
-        else:
-            return os.path.expanduser('~/.config/google-chrome')
-
     def _setup_driver(self):
-        """undetected-chromedriver 설정 (자동화 감지 우회)"""
-        import os
+        """디버그 모드로 실행된 Chrome에 연결"""
+        print(f"[INFO] Chrome 디버그 포트 {self.debug_port}에 연결 시도...")
 
-        options = uc.ChromeOptions()
-
-        # 기본 옵션 설정
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-infobars")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--no-sandbox")
-
-        # 추가 스텔스 옵션
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--disable-extensions")
-
-        # 기존 Chrome 프로필 사용 (선택적)
-        use_existing_profile = self.config.get('browser', {}).get('use_existing_profile', False)
-        if use_existing_profile:
-            user_data_dir = self._get_chrome_user_data_dir()
-            if os.path.exists(user_data_dir):
-                print(f"[INFO] 기존 Chrome 프로필 사용: {user_data_dir}")
-                options.add_argument(f"--user-data-dir={user_data_dir}")
-                options.add_argument("--profile-directory=Default")
-
-        # Chrome 버전 감지
-        chrome_version = self._get_chrome_version()
-        if chrome_version:
-            print(f"[INFO] 감지된 Chrome 버전: {chrome_version}")
+        options = Options()
+        options.add_experimental_option("debuggerAddress", f"127.0.0.1:{self.debug_port}")
 
         try:
-            self.driver = uc.Chrome(
-                options=options,
-                version_main=chrome_version,
-                use_subprocess=True,
-                headless=False,
-                driver_executable_path=None,
-            )
+            self.driver = webdriver.Chrome(options=options)
+            self.wait = WebDriverWait(self.driver, 10)
+            print("[SUCCESS] Chrome에 연결되었습니다!")
+            print(f"[INFO] 현재 URL: {self.driver.current_url}")
         except Exception as e:
-            print(f"[WARNING] 첫 번째 시도 실패: {e}")
-            print("[INFO] 대체 방법으로 시도 중...")
-            # 프로필 없이 재시도
-            options = uc.ChromeOptions()
-            options.add_argument("--start-maximized")
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            self.driver = uc.Chrome(
-                options=options,
-                version_main=chrome_version,
-                use_subprocess=True
-            )
-
-        self.wait = WebDriverWait(self.driver, 10)
-        print("[INFO] 브라우저가 시작되었습니다. (undetected-chromedriver)")
+            print(f"[ERROR] Chrome 연결 실패: {e}")
+            print("\n" + "=" * 60)
+            print("Chrome을 디버그 모드로 먼저 실행해주세요!")
+            print()
+            print("Windows: start_chrome.bat 실행")
+            print("Mac/Linux: ./start_chrome.sh 실행")
+            print("=" * 60)
+            raise
 
     def login(self) -> bool:
-        """
-        코레일 로그인
-
-        Returns:
-            bool: 로그인 성공 여부
-        """
+        """코레일 로그인"""
         try:
             print("[INFO] 로그인 페이지로 이동합니다...")
             self.driver.get(self.KORAIL_LOGIN_URL)
             time.sleep(2)
+
+            # 이미 로그인되어 있는지 확인
+            if "login" not in self.driver.current_url.lower():
+                print("[INFO] 이미 로그인되어 있습니다.")
+                return True
 
             # 로그인 정보 입력
             user_id = self.config['login']['id']
@@ -212,7 +105,6 @@ class KorailReservation:
 
             time.sleep(3)
 
-            # 로그인 성공 확인
             if "login" not in self.driver.current_url.lower():
                 print("[SUCCESS] 로그인 성공!")
                 return True
@@ -228,12 +120,7 @@ class KorailReservation:
             return False
 
     def search_trains(self) -> bool:
-        """
-        열차 조회
-
-        Returns:
-            bool: 조회 성공 여부
-        """
+        """열차 조회"""
         try:
             print("[INFO] 열차 조회 페이지로 이동합니다...")
             self.driver.get(self.KORAIL_SEARCH_URL)
@@ -259,7 +146,6 @@ class KorailReservation:
             date_str = journey['date']
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
 
-            # 날짜 입력 필드 찾기 및 설정
             date_input = self.driver.find_element(By.ID, "s_date")
             self.driver.execute_script(
                 f"arguments[0].value = '{date_obj.strftime('%Y%m%d')}'",
@@ -269,8 +155,6 @@ class KorailReservation:
             # 시간 설정
             time_str = journey['time']
             hour = time_str.split(':')[0]
-
-            # 시간 선택
             time_select = Select(self.driver.find_element(By.ID, "s_hour"))
             time_select.select_by_value(hour)
 
@@ -287,43 +171,31 @@ class KorailReservation:
             return False
 
     def check_availability(self) -> list:
-        """
-        예약 가능한 열차 확인
-
-        Returns:
-            list: 예약 가능한 열차 목록
-        """
+        """예약 가능한 열차 확인"""
         available_trains = []
         seat_type = self.config['seat']['type']
 
         try:
-            # 열차 목록 테이블 찾기
             train_rows = self.driver.find_elements(
                 By.CSS_SELECTOR, "table.tbl_train tbody tr"
             )
 
             for idx, row in enumerate(train_rows):
                 try:
-                    # KTX인지 확인
                     train_type = row.find_element(By.CSS_SELECTOR, "td.train_type").text
                     if "KTX" not in train_type:
                         continue
 
-                    # 출발/도착 시간
                     dep_time = row.find_element(By.CSS_SELECTOR, "td.dep_time").text
                     arr_time = row.find_element(By.CSS_SELECTOR, "td.arr_time").text
 
-                    # 좌석 상태 확인
                     if seat_type == "special":
-                        # 특실
                         seat_cell = row.find_element(By.CSS_SELECTOR, "td.special")
                     else:
-                        # 일반실
                         seat_cell = row.find_element(By.CSS_SELECTOR, "td.general")
 
                     seat_status = seat_cell.text.strip()
 
-                    # 예약 가능 여부 확인
                     if "예약하기" in seat_status or "좌석선택" in seat_status:
                         available_trains.append({
                             'index': idx,
@@ -345,39 +217,26 @@ class KorailReservation:
     def refresh_search(self):
         """검색 결과 새로고침"""
         try:
-            # 조회하기 버튼 다시 클릭 또는 페이지 새로고침
             refresh_btn = self.driver.find_element(
                 By.CSS_SELECTOR, "button.btn_refresh, button.btn_search"
             )
             refresh_btn.click()
             time.sleep(2)
         except:
-            # 버튼을 못 찾으면 페이지 새로고침
             self.driver.refresh()
             time.sleep(3)
 
     def reserve_ticket(self, train_info: dict) -> bool:
-        """
-        티켓 예약
-
-        Args:
-            train_info: 예약할 열차 정보
-
-        Returns:
-            bool: 예약 성공 여부
-        """
+        """티켓 예약"""
         try:
             print(f"[INFO] 예약 시도: {train_info['type']} {train_info['departure']}")
 
-            # 예약하기 버튼 클릭
             seat_element = train_info['seat_element']
             reserve_btn = seat_element.find_element(By.TAG_NAME, "a")
             reserve_btn.click()
 
             time.sleep(2)
 
-            # 예약 확인 페이지에서 최종 예약 버튼 클릭
-            # (실제 코레일 사이트 구조에 따라 수정 필요)
             confirm_btn = self.wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn_reserve"))
             )
@@ -385,7 +244,6 @@ class KorailReservation:
 
             time.sleep(3)
 
-            # 예약 성공 확인
             if "complete" in self.driver.current_url.lower() or "결제" in self.driver.page_source:
                 print("[SUCCESS] 예약이 완료되었습니다!")
                 return True
@@ -403,7 +261,7 @@ class KorailReservation:
     def run(self):
         """메인 실행 루프"""
         try:
-            # 브라우저 설정
+            # 디버그 모드 Chrome에 연결
             self._setup_driver()
 
             # 로그인
@@ -426,24 +284,20 @@ class KorailReservation:
                 attempt += 1
                 print(f"\n[INFO] 시도 {attempt}/{max_attempts} - {datetime.now().strftime('%H:%M:%S')}")
 
-                # 예약 가능한 열차 확인
                 available = self.check_availability()
 
                 if available:
-                    # 첫 번째 예약 가능한 열차 예약 시도
                     if self.reserve_ticket(available[0]):
                         print("\n" + "=" * 50)
                         print("[SUCCESS] 예약 성공! 결제를 진행하세요.")
                         print("=" * 50)
 
-                        # 알림
                         if self.config.get('notification', {}).get('sound', False):
-                            print('\a' * 5)  # 비프음
+                            print('\a' * 5)
 
                         input("프로그램을 종료하려면 Enter를 누르세요...")
                         return
 
-                # 새로고침 대기
                 print(f"[INFO] {refresh_interval}초 후 새로고침...")
                 time.sleep(refresh_interval)
                 self.refresh_search()
@@ -452,12 +306,9 @@ class KorailReservation:
 
         except KeyboardInterrupt:
             print("\n[INFO] 사용자에 의해 중단되었습니다.")
-        finally:
-            if self.driver:
-                self.driver.quit()
-                print("[INFO] 브라우저가 종료되었습니다.")
+        # 참고: 디버그 모드에서는 브라우저를 닫지 않음
 
 
 if __name__ == "__main__":
-    reservation = KorailReservation()
+    reservation = KorailReservationDebug()
     reservation.run()
