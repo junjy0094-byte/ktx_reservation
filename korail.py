@@ -1,23 +1,22 @@
 """
 코레일 KTX 취소표 자동 예약 프로그램
+undetected-chromedriver를 사용하여 자동화 감지 우회
 """
 
 import time
 import yaml
 from datetime import datetime
-from selenium import webdriver
+
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import Select
 from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException,
     ElementClickInterceptedException
 )
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 class KorailReservation:
@@ -68,31 +67,21 @@ class KorailReservation:
             return yaml.safe_load(f)
 
     def _setup_driver(self):
-        """Selenium WebDriver 설정"""
-        chrome_options = Options()
+        """undetected-chromedriver 설정 (자동화 감지 우회)"""
+        options = uc.ChromeOptions()
 
-        # 옵션 설정
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option("useAutomationExtension", False)
+        # 기본 옵션 설정
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--no-sandbox")
 
-        # 브라우저 감지 방지
-        chrome_options.add_argument("--disable-infobars")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--no-sandbox")
-
-        # WebDriver 초기화
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        # undetected-chromedriver 초기화
+        # version_main: 설치된 Chrome 버전에 맞게 자동 감지
+        self.driver = uc.Chrome(options=options, use_subprocess=True)
         self.wait = WebDriverWait(self.driver, 10)
 
-        # navigator.webdriver 속성 숨기기
-        self.driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-
-        print("[INFO] 브라우저가 시작되었습니다.")
+        print("[INFO] 브라우저가 시작되었습니다. (undetected-chromedriver)")
 
     def login(self) -> bool:
         """
