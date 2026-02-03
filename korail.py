@@ -66,6 +66,52 @@ class KorailReservation:
         with open(config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
 
+    def _get_chrome_version(self) -> int:
+        """설치된 Chrome 브라우저 버전 감지"""
+        import subprocess
+        import re
+        import platform
+
+        version = None
+        try:
+            if platform.system() == "Windows":
+                # Windows: 레지스트리에서 버전 확인
+                import winreg
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                         r"Software\Google\Chrome\BLBeacon")
+                    version_str, _ = winreg.QueryValueEx(key, "version")
+                    version = int(version_str.split('.')[0])
+                except:
+                    # PowerShell로 시도
+                    result = subprocess.run(
+                        ['powershell', '-command',
+                         '(Get-Item "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe").VersionInfo.FileVersion'],
+                        capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        version = int(result.stdout.strip().split('.')[0])
+            elif platform.system() == "Darwin":
+                # macOS
+                result = subprocess.run(
+                    ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version'],
+                    capture_output=True, text=True
+                )
+                match = re.search(r'(\d+)\.', result.stdout)
+                if match:
+                    version = int(match.group(1))
+            else:
+                # Linux
+                result = subprocess.run(['google-chrome', '--version'],
+                                        capture_output=True, text=True)
+                match = re.search(r'(\d+)\.', result.stdout)
+                if match:
+                    version = int(match.group(1))
+        except Exception as e:
+            print(f"[WARNING] Chrome 버전 감지 실패: {e}")
+
+        return version
+
     def _setup_driver(self):
         """undetected-chromedriver 설정 (자동화 감지 우회)"""
         options = uc.ChromeOptions()
@@ -76,11 +122,20 @@ class KorailReservation:
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--no-sandbox")
 
-        # undetected-chromedriver 초기화
-        # version_main: 설치된 Chrome 버전에 맞게 자동 감지
-        self.driver = uc.Chrome(options=options, use_subprocess=True)
-        self.wait = WebDriverWait(self.driver, 10)
+        # Chrome 버전 감지
+        chrome_version = self._get_chrome_version()
+        if chrome_version:
+            print(f"[INFO] 감지된 Chrome 버전: {chrome_version}")
+            self.driver = uc.Chrome(
+                options=options,
+                version_main=chrome_version,
+                use_subprocess=True
+            )
+        else:
+            print("[INFO] Chrome 버전 자동 감지 시도...")
+            self.driver = uc.Chrome(options=options, use_subprocess=True)
 
+        self.wait = WebDriverWait(self.driver, 10)
         print("[INFO] 브라우저가 시작되었습니다. (undetected-chromedriver)")
 
     def login(self) -> bool:
