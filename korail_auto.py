@@ -22,7 +22,7 @@ from PIL import ImageGrab
 
 # PyAutoGUI 안전 설정
 pyautogui.FAILSAFE = True  # 마우스를 화면 모서리로 이동하면 중단
-pyautogui.PAUSE = 0.1  # 각 동작 사이 대기 시간 (빠른 클릭을 위해 줄임)
+pyautogui.PAUSE = 0  # 동작 사이 대기 시간 없음 (최대 속도)
 
 
 class KorailAutoGUI:
@@ -91,7 +91,7 @@ class KorailAutoGUI:
         Returns:
             bool: True면 화면이 변경됨 (예매 페이지로 이동 등)
         """
-        time.sleep(0.5)  # 화면 변화 대기
+        time.sleep(0.05)  # 최소 대기 (50ms)
         after_screenshot = self.take_screenshot()
 
         # 화면이 동일하면 False, 다르면 True
@@ -252,29 +252,23 @@ class KorailAutoGUI:
 
             try:
                 # Step 1: 조회하기 버튼 클릭
-                print("  [1] 조회하기 클릭...", end=" ")
+                print("  [1] 조회하기 클릭...", end=" ", flush=True)
                 self.fast_click(search_btn_pos.x, search_btn_pos.y)
-                time.sleep(1.5)  # 조회 결과 로딩 대기
+                time.sleep(0.8)  # 조회 결과 로딩 최소 대기
                 print("완료")
 
-                # Step 2: 각 열차별로 예약 시도
+                # Step 2: 각 열차별로 예약 시도 (최대 속도)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
-                    print(f"  [2-{train_idx}] {train_idx}번 열차 예약하기 클릭...", end=" ")
+                    # 예약하기 버튼 즉시 클릭
                     self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
-                    time.sleep(0.3)  # 최소 대기
-                    print("완료")
 
-                    # Step 3: 예매 버튼 클릭 (빠르게)
-                    print(f"  [3-{train_idx}] 예매 버튼 클릭...", end=" ")
+                    # 예매 버튼 즉시 클릭 (대기 없음)
                     before_confirm = self.take_screenshot()
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
-                    time.sleep(0.5)
-                    print("완료")
 
-                    # Step 4: 예매 성공 확인
-                    print(f"  [4-{train_idx}] 예매 성공 확인 중...", end=" ")
+                    # 예매 성공 확인
                     if self.check_reservation_success(before_confirm):
-                        print("화면 변화 감지!")
+                        print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
 
                         # 추가 확인: 사용자에게 물어봄
                         print()
@@ -300,12 +294,10 @@ class KorailAutoGUI:
                             break
                         else:
                             print(f"[INFO] {train_idx}번 열차 실패, 다음 열차 시도...")
-                    else:
-                        print("변화 없음 (좌석 없음)")
 
-                    # 다음 열차 시도 전 짧은 대기
-                    if train_idx < len(reserve_btn_positions):
-                        time.sleep(0.2)
+                # 시도 결과 출력 (한 줄로)
+                if not reservation_success:
+                    print(f"  -> {len(reserve_btn_positions)}개 열차 모두 클릭 완료 (좌석 없음)")
 
                 # 예약 성공했으면 루프 종료
                 if reservation_success:
