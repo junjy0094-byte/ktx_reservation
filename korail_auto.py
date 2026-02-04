@@ -29,16 +29,85 @@ class KorailAutoGUI:
     """PyAutoGUI를 사용한 코레일 예약 자동화"""
 
     def __init__(self, config_path: str = "config.yaml"):
+        self.config_path = config_path
         self.config = self._load_config(config_path)
         self.last_screenshot = None
+
+        # 대기 시간 설정 로드
+        automation = self.config.get('automation', {})
+        delay = automation.get('delay', {})
+        self.delay_after_search = delay.get('after_search', 0.8)
+        self.delay_min = delay.get('between_attempts_min', 2.0)
+        self.delay_max = delay.get('between_attempts_max', 4.0)
+        self.delay_screen_check = delay.get('screen_check', 0.05)
 
     def _load_config(self, config_path: str) -> dict:
         """설정 파일 로드"""
         with open(config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
 
-    def random_delay(self, min_sec: float = 2.0, max_sec: float = 4.0):
+    def _save_config(self):
+        """설정 파일 저장"""
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
+
+    def save_coordinates(self, search_btn, reserve_btns, confirm_btn):
+        """좌표를 설정 파일에 저장"""
+        if 'automation' not in self.config:
+            self.config['automation'] = {}
+        if 'coordinates' not in self.config['automation']:
+            self.config['automation']['coordinates'] = {}
+
+        coords = self.config['automation']['coordinates']
+        coords['search_button'] = {'x': search_btn.x, 'y': search_btn.y}
+        coords['reserve_buttons'] = [{'x': pos.x, 'y': pos.y} for pos in reserve_btns]
+        coords['confirm_button'] = {'x': confirm_btn.x, 'y': confirm_btn.y}
+
+        self._save_config()
+        print("[INFO] 좌표가 config.yaml에 저장되었습니다.")
+
+    def load_coordinates(self):
+        """저장된 좌표 불러오기"""
+        try:
+            coords = self.config.get('automation', {}).get('coordinates', {})
+
+            search_btn = coords.get('search_button', {})
+            reserve_btns = coords.get('reserve_buttons', [])
+            confirm_btn = coords.get('confirm_button', {})
+
+            # 유효성 검사
+            if not search_btn or search_btn.get('x', 0) == 0:
+                return None, None, None
+
+            if not reserve_btns or len(reserve_btns) == 0:
+                return None, None, None
+
+            if not confirm_btn or confirm_btn.get('x', 0) == 0:
+                return None, None, None
+
+            # Point 객체로 변환
+            from collections import namedtuple
+            Point = namedtuple('Point', ['x', 'y'])
+
+            search_pos = Point(search_btn['x'], search_btn['y'])
+            reserve_positions = [Point(btn['x'], btn['y']) for btn in reserve_btns]
+            confirm_pos = Point(confirm_btn['x'], confirm_btn['y'])
+
+            return search_pos, reserve_positions, confirm_pos
+
+        except Exception as e:
+            print(f"[WARNING] 좌표 불러오기 실패: {e}")
+            return None, None, None
+
+    def has_saved_coordinates(self) -> bool:
+        """저장된 좌표가 있는지 확인"""
+        search, reserve, confirm = self.load_coordinates()
+        return search is not None and reserve is not None and confirm is not None
+
+    def random_delay(self, min_sec: float = None, max_sec: float = None):
         """랜덤 대기 시간"""
+        min_sec = min_sec or self.delay_min
+        max_sec = max_sec or self.delay_max
         delay = random.uniform(min_sec, max_sec)
         time.sleep(delay)
         return delay
@@ -48,25 +117,17 @@ class KorailAutoGUI:
         return ImageGrab.grab()
 
     def compare_screenshots(self, img1, img2, threshold: float = 0.95) -> bool:
-        """
-        두 스크린샷 비교
-
-        Returns:
-            bool: True면 화면이 거의 동일 (변화 없음), False면 화면이 변경됨
-        """
+        """두 스크린샷 비교"""
         if img1 is None or img2 is None:
             return False
 
         try:
-            # 이미지 크기가 다르면 다른 것으로 판단
             if img1.size != img2.size:
                 return False
 
-            # 픽셀 비교 (샘플링)
             pixels1 = list(img1.getdata())
             pixels2 = list(img2.getdata())
 
-            # 샘플링으로 빠르게 비교
             sample_size = min(10000, len(pixels1))
             sample_indices = random.sample(range(len(pixels1)), sample_size)
 
@@ -82,61 +143,19 @@ class KorailAutoGUI:
             return False
 
     def check_screen_changed(self, before_screenshot) -> bool:
-        """
-        화면이 변경되었는지 확인
-
-        Args:
-            before_screenshot: 이전 스크린샷
-
-        Returns:
-            bool: True면 화면이 변경됨 (예매 페이지로 이동 등)
-        """
-        time.sleep(0.05)  # 최소 대기 (50ms)
+        """화면이 변경되었는지 확인"""
+        time.sleep(self.delay_screen_check)
         after_screenshot = self.take_screenshot()
-
-        # 화면이 동일하면 False, 다르면 True
         is_same = self.compare_screenshots(before_screenshot, after_screenshot)
         return not is_same
 
     def check_reservation_success(self, before_screenshot) -> bool:
-        """
-        예매 성공 여부 확인
-
-        Args:
-            before_screenshot: 예매 버튼 클릭 전 스크린샷
-
-        Returns:
-            bool: 예매 성공 여부
-        """
-        # 방법 1: 화면 변화 감지
+        """예매 성공 여부 확인"""
         screen_changed = self.check_screen_changed(before_screenshot)
-
         if screen_changed:
             print("[INFO] 화면 변화 감지됨!")
             return True
-
         return False
-
-    def open_korail_website(self):
-        """코레일 웹사이트 열기"""
-        url = "https://www.korail.com/ticket/main/mainForm.do"
-
-        if platform.system() == "Windows":
-            subprocess.Popen(['start', url], shell=True)
-        elif platform.system() == "Darwin":
-            subprocess.Popen(['open', url])
-        else:
-            subprocess.Popen(['xdg-open', url])
-
-        print("[INFO] 브라우저가 열렸습니다. 10초 대기...")
-        time.sleep(10)
-
-    def type_korean(self, text: str):
-        """한글 입력 (클립보드 사용)"""
-        pyperclip.copy(text)
-        time.sleep(0.1)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(0.3)
 
     def fast_click(self, x: int, y: int):
         """빠른 클릭 (최소 대기)"""
@@ -165,10 +184,8 @@ class KorailAutoGUI:
         input("준비가 완료되면 Enter를 눌러주세요...")
         print()
 
-    def run_with_coordinates(self):
-        """좌표 기반 자동화 실행 (사용자가 좌표 설정)"""
-        self.wait_for_user_setup()
-
+    def setup_coordinates(self):
+        """좌표 설정 (새로 등록)"""
         print("\n[ 좌표 설정 ]")
         print("각 버튼의 좌표를 설정합니다.")
         print()
@@ -206,7 +223,7 @@ class KorailAutoGUI:
 
         print(f"\n   총 {len(reserve_btn_positions)}개의 열차 등록 완료!")
 
-        # 3. 예매 버튼 좌표 설정 (예약하기 클릭 후 나오는 팝업/페이지의 예매 버튼)
+        # 3. 예매 버튼 좌표 설정
         print()
         print("3. 아무 '예약하기' 버튼을 한번 클릭해서 예매 확인 화면을 띄워주세요.")
         print("   그 다음 '예매' 또는 '결제하기' 버튼 위에 마우스를 올려놓고 Enter를 누르세요...")
@@ -214,6 +231,13 @@ class KorailAutoGUI:
         confirm_btn_pos = pyautogui.position()
         print(f"   -> 예매 버튼 좌표: ({confirm_btn_pos.x}, {confirm_btn_pos.y})")
 
+        # 좌표 저장
+        self.save_coordinates(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
+
+        return search_btn_pos, reserve_btn_positions, confirm_btn_pos
+
+    def print_coordinates_info(self, search_btn_pos, reserve_btn_positions, confirm_btn_pos):
+        """좌표 정보 출력"""
         print()
         print("=" * 60)
         print("  좌표 설정 완료!")
@@ -225,12 +249,20 @@ class KorailAutoGUI:
         print("=" * 60)
         print()
 
-        # 예약 설정
+    def print_delay_info(self):
+        """대기 시간 설정 출력"""
+        print(f"[INFO] 대기 시간 설정 (config.yaml에서 변경 가능)")
+        print(f"  - 조회 후 대기: {self.delay_after_search}초")
+        print(f"  - 재시도 간격: {self.delay_min}~{self.delay_max}초 (랜덤)")
+        print(f"  - 화면 확인: {self.delay_screen_check}초")
+
+    def run_reservation_loop(self, search_btn_pos, reserve_btn_positions, confirm_btn_pos):
+        """예약 루프 실행"""
         max_attempts = self.config['reservation']['max_attempts']
 
         print(f"[INFO] 최대 시도 횟수: {max_attempts}회")
-        print(f"[INFO] 새로고침 간격: 2~4초 (랜덤)")
         print(f"[INFO] 등록된 열차: {len(reserve_btn_positions)}개 (순서대로 시도)")
+        self.print_delay_info()
         print()
         print("[ 동작 순서 ]")
         print("1. 조회하기 클릭")
@@ -241,7 +273,6 @@ class KorailAutoGUI:
         input("자동 예약을 시작하려면 Enter를 누르세요...")
         print()
 
-        # 자동 예약 루프
         attempt = 0
         reservation_success = False
 
@@ -254,23 +285,17 @@ class KorailAutoGUI:
                 # Step 1: 조회하기 버튼 클릭
                 print("  [1] 조회하기 클릭...", end=" ", flush=True)
                 self.fast_click(search_btn_pos.x, search_btn_pos.y)
-                time.sleep(0.8)  # 조회 결과 로딩 최소 대기
+                time.sleep(self.delay_after_search)
                 print("완료")
 
                 # Step 2: 각 열차별로 예약 시도 (최대 속도)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
-                    # 예약하기 버튼 즉시 클릭
                     self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
-
-                    # 예매 버튼 즉시 클릭 (대기 없음)
                     before_confirm = self.take_screenshot()
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
 
-                    # 예매 성공 확인
                     if self.check_reservation_success(before_confirm):
                         print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
-
-                        # 추가 확인: 사용자에게 물어봄
                         print()
                         print("=" * 60)
                         print(f"  [확인] {train_idx}번 열차 예매가 성공한 것 같습니다!")
@@ -286,7 +311,6 @@ class KorailAutoGUI:
                             print("  결제를 진행해주세요.")
                             print("*" * 60)
 
-                            # 알림음
                             if self.config.get('notification', {}).get('sound', False):
                                 for _ in range(5):
                                     print('\a', end='', flush=True)
@@ -295,16 +319,13 @@ class KorailAutoGUI:
                         else:
                             print(f"[INFO] {train_idx}번 열차 실패, 다음 열차 시도...")
 
-                # 시도 결과 출력 (한 줄로)
                 if not reservation_success:
                     print(f"  -> {len(reserve_btn_positions)}개 열차 모두 클릭 완료 (좌석 없음)")
 
-                # 예약 성공했으면 루프 종료
                 if reservation_success:
                     break
 
-                # 모든 열차 실패 시 랜덤 대기 후 재시도
-                delay = self.random_delay(2.0, 4.0)
+                delay = self.random_delay()
                 print(f"  [대기] 모든 열차 실패. {delay:.1f}초 후 재시도...")
 
             except pyautogui.FailSafeException:
@@ -315,15 +336,41 @@ class KorailAutoGUI:
                 break
             except Exception as e:
                 print(f"\n[오류] {e}")
-                self.random_delay(2.0, 4.0)
+                self.random_delay()
 
         if not reservation_success:
             print("\n[INFO] 자동 예약 종료 (성공하지 못함)")
 
         print("\n프로그램을 종료합니다.")
 
+    def run_with_coordinates(self):
+        """좌표 기반 자동화 실행"""
+        self.wait_for_user_setup()
+
+        # 저장된 좌표 확인
+        if self.has_saved_coordinates():
+            print("\n[ 저장된 좌표 발견 ]")
+            search, reserve, confirm = self.load_coordinates()
+            print(f"  조회하기: ({search.x}, {search.y})")
+            print(f"  예약하기: {len(reserve)}개")
+            for i, pos in enumerate(reserve, 1):
+                print(f"    - {i}번 열차: ({pos.x}, {pos.y})")
+            print(f"  예매: ({confirm.x}, {confirm.y})")
+            print()
+            choice = input("저장된 좌표를 사용할까요? (y: 사용 / n: 새로 설정): ").strip().lower()
+
+            if choice == 'y':
+                search_btn_pos, reserve_btn_positions, confirm_btn_pos = search, reserve, confirm
+            else:
+                search_btn_pos, reserve_btn_positions, confirm_btn_pos = self.setup_coordinates()
+        else:
+            search_btn_pos, reserve_btn_positions, confirm_btn_pos = self.setup_coordinates()
+
+        self.print_coordinates_info(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
+        self.run_reservation_loop(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
+
     def run_simple_refresh(self):
-        """단순 새로고침 모드 (가장 간단한 방식)"""
+        """단순 새로고침 모드"""
         self.wait_for_user_setup()
 
         print("\n[ 단순 새로고침 모드 ]")
@@ -332,8 +379,7 @@ class KorailAutoGUI:
         print()
 
         max_attempts = self.config['reservation']['max_attempts']
-
-        print(f"새로고침 간격: 2~4초 (랜덤)")
+        self.print_delay_info()
         print()
         input("시작하려면 Enter를 누르세요...")
         print()
@@ -345,7 +391,7 @@ class KorailAutoGUI:
 
             try:
                 pyautogui.press('f5')
-                delay = self.random_delay(2.0, 4.0)
+                delay = self.random_delay()
                 print(f"[{current_time}] 새로고침 {attempt}/{max_attempts} (다음까지 {delay:.1f}초)")
 
             except pyautogui.FailSafeException:
@@ -359,15 +405,29 @@ class KorailAutoGUI:
 
     def run(self):
         """메인 실행"""
-        print("\n실행 모드를 선택하세요:")
+        print("\n" + "=" * 60)
+        print("  실행 모드를 선택하세요")
+        print("=" * 60)
         print("1. 좌표 기반 자동 클릭 (추천)")
-        print("2. 단순 새로고침 모드")
+        print("2. 좌표 새로 설정하기")
+        print("3. 단순 새로고침 모드")
         print()
 
-        choice = input("선택 (1 또는 2): ").strip()
+        if self.has_saved_coordinates():
+            print("[INFO] 저장된 좌표가 있습니다. (1번 선택 시 사용 가능)")
+        else:
+            print("[INFO] 저장된 좌표가 없습니다. (새로 설정 필요)")
+
+        print()
+        choice = input("선택 (1/2/3): ").strip()
 
         if choice == "1":
             self.run_with_coordinates()
+        elif choice == "2":
+            self.wait_for_user_setup()
+            search_btn_pos, reserve_btn_positions, confirm_btn_pos = self.setup_coordinates()
+            self.print_coordinates_info(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
+            self.run_reservation_loop(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
         else:
             self.run_simple_refresh()
 

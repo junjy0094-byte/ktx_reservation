@@ -24,6 +24,25 @@ reservation:
   max_attempts: 1000             # 최대 시도 횟수
   time_range_hours: 2            # 희망 시간 기준 전후 범위 (시간)
 
+# PyAutoGUI 자동화 설정
+automation:
+  # 대기 시간 설정 (초)
+  delay:
+    after_search: 0.8            # 조회하기 클릭 후 대기 (페이지 로딩)
+    between_attempts_min: 2.0    # 재시도 간 최소 대기
+    between_attempts_max: 4.0    # 재시도 간 최대 대기
+    screen_check: 0.05           # 화면 변화 확인 대기
+
+  # 저장된 좌표 (프로그램 실행 시 자동 저장됨)
+  coordinates:
+    search_button:               # 조회하기 버튼
+      x: 0
+      y: 0
+    reserve_buttons: []          # 예약하기 버튼들 [{x: 0, y: 0}, ...]
+    confirm_button:              # 예매 버튼
+      x: 0
+      y: 0
+
 # 브라우저 설정
 browser:
   use_existing_profile: false    # true: 기존 Chrome 프로필 사용 (로그인 유지됨)
