@@ -134,12 +134,51 @@ class KorailAutoGUI:
         time.sleep(delay)
         return delay
 
-    def take_screenshot(self):
-        """현재 화면 스크린샷"""
+    def take_screenshot(self, region=None):
+        """
+        현재 화면 스크린샷
+
+        Args:
+            region: (left, top, right, bottom) 특정 영역만 캡처
+        """
+        if region:
+            return ImageGrab.grab(bbox=region)
         return ImageGrab.grab()
 
-    def compare_screenshots(self, img1, img2, threshold: float = 0.95) -> bool:
-        """두 스크린샷 비교"""
+    def take_screenshot_around(self, x: int, y: int, size: int = 300):
+        """
+        특정 좌표 주변 영역 스크린샷
+
+        Args:
+            x, y: 중심 좌표
+            size: 캡처 영역 크기 (정사각형)
+        """
+        half = size // 2
+        # 화면 범위 내로 조정
+        screen_width, screen_height = pyautogui.size()
+        left = max(0, x - half)
+        top = max(0, y - half)
+        right = min(screen_width, x + half)
+        bottom = min(screen_height, y + half)
+        return ImageGrab.grab(bbox=(left, top, right, bottom))
+
+    def get_average_color(self, img) -> tuple:
+        """이미지의 평균 색상 계산"""
+        try:
+            pixels = list(img.getdata())
+            r = sum(p[0] for p in pixels) // len(pixels)
+            g = sum(p[1] for p in pixels) // len(pixels)
+            b = sum(p[2] for p in pixels) // len(pixels)
+            return (r, g, b)
+        except:
+            return (0, 0, 0)
+
+    def color_difference(self, color1: tuple, color2: tuple) -> int:
+        """두 색상의 차이 계산 (0~765)"""
+        return abs(color1[0] - color2[0]) + abs(color1[1] - color2[1]) + abs(color1[2] - color2[2])
+
+    def compare_screenshots(self, img1, img2, threshold: float = 0.90) -> bool:
+        """두 스크린샷 비교 (threshold 낮춤)"""
         if img1 is None or img2 is None:
             return False
 
@@ -150,12 +189,14 @@ class KorailAutoGUI:
             pixels1 = list(img1.getdata())
             pixels2 = list(img2.getdata())
 
-            sample_size = min(10000, len(pixels1))
+            sample_size = min(5000, len(pixels1))
             sample_indices = random.sample(range(len(pixels1)), sample_size)
 
             matches = 0
             for idx in sample_indices:
-                if pixels1[idx] == pixels2[idx]:
+                # 색상 차이가 30 이하면 같은 픽셀로 판정 (약간의 차이 허용)
+                diff = self.color_difference(pixels1[idx][:3], pixels2[idx][:3])
+                if diff < 30:
                     matches += 1
 
             similarity = matches / sample_size
@@ -164,19 +205,60 @@ class KorailAutoGUI:
         except Exception:
             return False
 
-    def check_screen_changed(self, before_screenshot) -> bool:
-        """화면이 변경되었는지 확인"""
-        time.sleep(self.delay_screen_check)
-        after_screenshot = self.take_screenshot()
-        is_same = self.compare_screenshots(before_screenshot, after_screenshot)
+    def check_screen_changed(self, before_screenshot, check_area=None) -> bool:
+        """
+        화면이 변경되었는지 확인
+
+        Args:
+            before_screenshot: 이전 스크린샷
+            check_area: 확인할 영역 (x, y, size) - None이면 전체 화면
+        """
+        # 더 긴 대기 시간 (페이지 로딩 고려)
+        time.sleep(0.3)
+
+        if check_area:
+            x, y, size = check_area
+            after_screenshot = self.take_screenshot_around(x, y, size)
+            # 영역 스크린샷은 다시 찍어야 함
+            before_region = self.take_screenshot_around(x, y, size)
+            time.sleep(0.2)
+            after_screenshot = self.take_screenshot_around(x, y, size)
+            is_same = self.compare_screenshots(before_region, after_screenshot, threshold=0.85)
+        else:
+            after_screenshot = self.take_screenshot()
+            is_same = self.compare_screenshots(before_screenshot, after_screenshot, threshold=0.90)
+
         return not is_same
 
-    def check_reservation_success(self, before_screenshot) -> bool:
-        """예매 성공 여부 확인"""
-        screen_changed = self.check_screen_changed(before_screenshot)
-        if screen_changed:
-            print("[INFO] 화면 변화 감지됨!")
+    def check_reservation_success(self, confirm_btn_pos) -> bool:
+        """
+        예매 성공 여부 확인 (개선된 버전)
+
+        Args:
+            confirm_btn_pos: 예매 버튼 위치 (변화 감지 기준점)
+        """
+        # 방법 1: 예매 버튼 주변 영역 색상 변화 확인
+        time.sleep(0.3)  # 페이지 반응 대기
+
+        # 예매 버튼 위치 주변 캡처
+        img1 = self.take_screenshot_around(confirm_btn_pos.x, confirm_btn_pos.y, 400)
+        color1 = self.get_average_color(img1)
+
+        time.sleep(0.2)
+
+        img2 = self.take_screenshot_around(confirm_btn_pos.x, confirm_btn_pos.y, 400)
+        color2 = self.get_average_color(img2)
+
+        # 색상 차이가 크면 화면이 바뀐 것
+        color_diff = self.color_difference(color1, color2)
+
+        # 이미지 직접 비교
+        is_same = self.compare_screenshots(img1, img2, threshold=0.85)
+
+        if not is_same or color_diff > 50:
+            print(f"[INFO] 화면 변화 감지! (색상차이: {color_diff}, 동일: {is_same})")
             return True
+
         return False
 
     def fast_click(self, x: int, y: int):
@@ -312,11 +394,13 @@ class KorailAutoGUI:
 
                 # Step 2: 각 열차별로 예약 시도 (최대 속도)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
+                    # 예약하기 버튼 클릭
                     self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
-                    before_confirm = self.take_screenshot()
+                    # 예매 버튼 클릭
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
 
-                    if self.check_reservation_success(before_confirm):
+                    # 화면 변화 확인 (예매 버튼 주변 영역 비교)
+                    if self.check_reservation_success(confirm_btn_pos):
                         print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
                         print()
                         print("=" * 60)
