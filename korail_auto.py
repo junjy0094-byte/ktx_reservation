@@ -29,10 +29,13 @@ pyautogui.PAUSE = 0  # 동작 사이 대기 시간 없음 (최대 속도)
 class KorailAutoGUI:
     """PyAutoGUI를 사용한 코레일 예약 자동화"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", debug: bool = False):
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.last_screenshot = None
+        self.baseline_screenshot = None  # 기준 스크린샷 (최초 1회만 저장)
+        self.debug = debug  # 디버깅 모드
+        self.debug_count = 0  # 디버깅 스크린샷 카운터
 
         # 대기 시간 설정 로드
         automation = self.config.get('automation', {})
@@ -164,6 +167,31 @@ class KorailAutoGUI:
         bottom = min(screen_height, y + half)
         return ImageGrab.grab(bbox=(left, top, right, bottom))
 
+    def take_center_screenshot(self, width: int = 600, height: int = 400):
+        """
+        화면 중앙 영역 스크린샷
+
+        Args:
+            width: 캡처 너비
+            height: 캡처 높이
+        """
+        screen_width, screen_height = pyautogui.size()
+        left = (screen_width - width) // 2
+        top = (screen_height - height) // 2
+        right = left + width
+        bottom = top + height
+        return ImageGrab.grab(bbox=(left, top, right, bottom))
+
+    def save_debug_screenshot(self, img, label: str = ""):
+        """디버깅용 스크린샷 저장"""
+        if not self.debug:
+            return
+        self.debug_count += 1
+        timestamp = datetime.now().strftime('%H%M%S')
+        filename = f"debug_{self.debug_count:03d}_{timestamp}_{label}.png"
+        img.save(filename)
+        print(f"[DEBUG] 스크린샷 저장: {filename}")
+
     def get_average_color(self, img) -> tuple:
         """이미지의 평균 색상 계산"""
         try:
@@ -232,30 +260,45 @@ class KorailAutoGUI:
 
         return not is_same
 
+    def capture_baseline(self):
+        """
+        기준 스크린샷 저장 (최초 1회)
+        조회하기 클릭 후 호출하여 정상 상태의 화면을 저장
+        """
+        time.sleep(1.0)  # 페이지 로딩 대기
+        self.baseline_screenshot = self.take_center_screenshot()
+        self.baseline_color = self.get_average_color(self.baseline_screenshot)
+        self.save_debug_screenshot(self.baseline_screenshot, "baseline")
+        print(f"[INFO] 기준 스크린샷 저장 완료 (평균색상: {self.baseline_color})")
+
     def check_reservation_success(self, confirm_btn_pos) -> bool:
         """
-        예매 성공 여부 확인 (개선된 버전)
+        예매 성공 여부 확인 (최적화 버전)
+        기준 스크린샷과 현재 화면 중앙을 비교
 
         Args:
-            confirm_btn_pos: 예매 버튼 위치 (변화 감지 기준점)
+            confirm_btn_pos: 예매 버튼 위치 (사용 안 함, 호환성 유지)
         """
-        # 방법 1: 예매 버튼 주변 영역 색상 변화 확인
-        time.sleep(0.3)  # 페이지 반응 대기
+        time.sleep(1.0)  # 페이지 반응 대기
 
-        # 예매 버튼 위치 주변 캡처
-        img1 = self.take_screenshot_around(confirm_btn_pos.x, confirm_btn_pos.y, 400)
-        color1 = self.get_average_color(img1)
+        # 현재 화면 중앙 캡처
+        current = self.take_center_screenshot()
+        current_color = self.get_average_color(current)
+        self.save_debug_screenshot(current, "current")
 
-        time.sleep(0.2)
+        # 기준 스크린샷이 없으면 False
+        if self.baseline_screenshot is None:
+            print("[WARNING] 기준 스크린샷이 없습니다.")
+            return False
 
-        img2 = self.take_screenshot_around(confirm_btn_pos.x, confirm_btn_pos.y, 400)
-        color2 = self.get_average_color(img2)
-
-        # 색상 차이가 크면 화면이 바뀐 것
-        color_diff = self.color_difference(color1, color2)
+        # 색상 차이 계산
+        color_diff = self.color_difference(self.baseline_color, current_color)
 
         # 이미지 직접 비교
-        is_same = self.compare_screenshots(img1, img2, threshold=0.85)
+        is_same = self.compare_screenshots(self.baseline_screenshot, current, threshold=0.85)
+
+        if self.debug:
+            print(f"[DEBUG] 색상차이: {color_diff}, 동일: {is_same}")
 
         if not is_same or color_diff > 50:
             print(f"[INFO] 화면 변화 감지! (색상차이: {color_diff}, 동일: {is_same})")
@@ -381,6 +424,7 @@ class KorailAutoGUI:
 
         attempt = 0
         reservation_success = False
+        baseline_captured = False
 
         while attempt < max_attempts and not reservation_success:
             attempt += 1
@@ -394,6 +438,11 @@ class KorailAutoGUI:
                 time.sleep(self.delay_after_search)
                 print("완료")
 
+                # 기준 스크린샷 저장 (최초 1회만)
+                if not baseline_captured:
+                    self.capture_baseline()
+                    baseline_captured = True
+
                 # Step 2: 각 열차별로 예약 시도 (최대 속도)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
                     # 예약하기 버튼 클릭
@@ -401,7 +450,7 @@ class KorailAutoGUI:
                     # 예매 버튼 클릭
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
 
-                    # 화면 변화 확인 (예매 버튼 주변 영역 비교)
+                    # 화면 변화 확인 (기준 스크린샷과 비교)
                     if self.check_reservation_success(confirm_btn_pos):
                         print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
                         print()
@@ -547,5 +596,9 @@ class KorailAutoGUI:
 
 
 if __name__ == "__main__":
-    auto = KorailAutoGUI()
+    import sys
+    debug_mode = "--debug" in sys.argv
+    if debug_mode:
+        print("[DEBUG] 디버깅 모드 활성화 - 스크린샷이 파일로 저장됩니다.")
+    auto = KorailAutoGUI(debug=debug_mode)
     auto.run()
