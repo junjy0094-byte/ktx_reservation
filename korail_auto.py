@@ -169,14 +169,15 @@ class KorailAutoGUI:
 
     def take_center_screenshot(self, width: int = 600, height: int = 400):
         """
-        화면 중앙 영역 스크린샷
+        화면 왼쪽 중앙 영역 스크린샷 (코레일 사이트가 왼쪽에 표시됨)
 
         Args:
             width: 캡처 너비
             height: 캡처 높이
         """
         screen_width, screen_height = pyautogui.size()
-        left = (screen_width - width) // 2
+        # 왼쪽 절반의 중앙
+        left = (screen_width // 2 - width) // 2
         top = (screen_height - height) // 2
         right = left + width
         bottom = top + height
@@ -452,35 +453,25 @@ class KorailAutoGUI:
 
                     # 화면 변화 확인 (기준 스크린샷과 비교)
                     if self.check_reservation_success(confirm_btn_pos):
+                        reservation_success = True
                         print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
                         print()
-                        print("=" * 60)
-                        print(f"  [확인] {train_idx}번 열차 예매가 성공한 것 같습니다!")
-                        print("  화면을 확인해주세요.")
-                        print("=" * 60)
+                        print("*" * 60)
+                        print(f"  축하합니다! {train_idx}번 열차 예매 성공!")
+                        print("  결제를 진행해주세요.")
+                        print("*" * 60)
 
-                        response = input("예매 성공했나요? (y/n): ").strip().lower()
-                        if response == 'y':
-                            reservation_success = True
-                            print()
-                            print("*" * 60)
-                            print(f"  축하합니다! {train_idx}번 열차 예매 성공!")
-                            print("  결제를 진행해주세요.")
-                            print("*" * 60)
+                        # 소리 알림
+                        if self.config.get('notification', {}).get('sound', False):
+                            for _ in range(5):
+                                print('\a', end='', flush=True)
+                                time.sleep(0.3)
 
-                            # 소리 알림
-                            if self.config.get('notification', {}).get('sound', False):
-                                for _ in range(5):
-                                    print('\a', end='', flush=True)
-                                    time.sleep(0.3)
-
-                            # Discord 알림
-                            self.discord_send_message(
-                                f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!"
-                            )
-                            break
-                        else:
-                            print(f"[INFO] {train_idx}번 열차 실패, 다음 열차 시도...")
+                        # Discord 알림
+                        self.discord_send_message(
+                            f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!"
+                        )
+                        break
 
                 if not reservation_success:
                     print(f"  -> {len(reserve_btn_positions)}개 열차 모두 클릭 완료 (좌석 없음)")
