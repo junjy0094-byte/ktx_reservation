@@ -50,3 +50,6 @@ browser:
 # 알림 설정 (선택사항)
 notification:
   sound: true                    # 예약 성공시 소리 알림
+  discord:
+    enabled: true                # Discord 알림 사용 여부
+    webhook_url: ""              # Discord 웹훅 URL (비워두면 알림 안함)

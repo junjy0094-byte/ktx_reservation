@@ -16,6 +16,7 @@ import pyautogui
 import pyperclip
 import subprocess
 import platform
+import requests
 from datetime import datetime
 from PIL import ImageGrab
 
@@ -50,6 +51,27 @@ class KorailAutoGUI:
         """설정 파일 저장"""
         with open(self.config_path, 'w', encoding='utf-8') as f:
             yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
+
+    def discord_send_message(self, text: str):
+        """Discord 웹훅으로 메시지 전송"""
+        try:
+            notification = self.config.get('notification', {})
+            discord = notification.get('discord', {})
+
+            if not discord.get('enabled', False):
+                return
+
+            webhook_url = discord.get('webhook_url', '')
+            if not webhook_url:
+                return
+
+            now = datetime.now()
+            message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(text)}"}
+            response = requests.post(webhook_url, data=message)
+            print(f"[Discord] 메시지 전송 완료 (상태: {response.status_code})")
+
+        except Exception as e:
+            print(f"[Discord] 메시지 전송 실패: {e}")
 
     def save_coordinates(self, search_btn, reserve_btns, confirm_btn):
         """좌표를 설정 파일에 저장"""
@@ -311,10 +333,16 @@ class KorailAutoGUI:
                             print("  결제를 진행해주세요.")
                             print("*" * 60)
 
+                            # 소리 알림
                             if self.config.get('notification', {}).get('sound', False):
                                 for _ in range(5):
                                     print('\a', end='', flush=True)
                                     time.sleep(0.3)
+
+                            # Discord 알림
+                            self.discord_send_message(
+                                f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!"
+                            )
                             break
                         else:
                             print(f"[INFO] {train_idx}번 열차 실패, 다음 열차 시도...")
