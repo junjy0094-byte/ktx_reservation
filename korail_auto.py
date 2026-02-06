@@ -461,6 +461,13 @@ class KorailAutoGUI:
                         print("  결제를 진행해주세요.")
                         print("*" * 60)
 
+                        # 성공 스크린샷 저장
+                        success_img = self.take_screenshot()
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        filename = f"success_{timestamp}.png"
+                        success_img.save(filename)
+                        print(f"[INFO] 성공 스크린샷 저장: {filename}")
+
                         # 소리 알림
                         if self.config.get('notification', {}).get('sound', False):
                             for _ in range(5):
