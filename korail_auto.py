@@ -276,6 +276,7 @@ class KorailAutoGUI:
         """
         예매 성공 여부 확인 (최적화 버전)
         기준 스크린샷과 현재 화면 중앙을 비교
+        "서비스 연결 대기중" 팝업 등 일시적 변화를 필터링
 
         Args:
             confirm_btn_pos: 예매 버튼 위치 (사용 안 함, 호환성 유지)
@@ -285,7 +286,7 @@ class KorailAutoGUI:
         # 현재 화면 중앙 캡처
         current = self.take_center_screenshot()
         current_color = self.get_average_color(current)
-        self.save_debug_screenshot(current, "current")
+        self.save_debug_screenshot(current, "check1")
 
         # 기준 스크린샷이 없으면 False
         if self.baseline_screenshot is None:
@@ -299,11 +300,32 @@ class KorailAutoGUI:
         is_same = self.compare_screenshots(self.baseline_screenshot, current, threshold=0.85)
 
         if self.debug:
-            print(f"[DEBUG] 색상차이: {color_diff}, 동일: {is_same}")
+            print(f"[DEBUG] 1차 확인 - 색상차이: {color_diff}, 동일: {is_same}")
 
+        # 1차 변화 감지
         if not is_same or color_diff > 50:
-            print(f"[INFO] 화면 변화 감지! (색상차이: {color_diff}, 동일: {is_same})")
-            return True
+            # 팝업이 사라질 때까지 대기 후 2차 확인
+            print("[INFO] 화면 변화 감지, 2초 후 재확인...")
+            time.sleep(2.0)
+
+            # 2차 확인 - 여전히 변화가 있는지 확인
+            current2 = self.take_center_screenshot()
+            current_color2 = self.get_average_color(current2)
+            self.save_debug_screenshot(current2, "check2")
+
+            color_diff2 = self.color_difference(self.baseline_color, current_color2)
+            is_same2 = self.compare_screenshots(self.baseline_screenshot, current2, threshold=0.85)
+
+            if self.debug:
+                print(f"[DEBUG] 2차 확인 - 색상차이: {color_diff2}, 동일: {is_same2}")
+
+            # 2차에서도 여전히 다르면 진짜 성공
+            if not is_same2 or color_diff2 > 50:
+                print(f"[INFO] 화면 변화 확정! (색상차이: {color_diff2}, 동일: {is_same2})")
+                return True
+            else:
+                print("[INFO] 일시적 팝업으로 판단, 계속 진행...")
+                return False
 
         return False
 
