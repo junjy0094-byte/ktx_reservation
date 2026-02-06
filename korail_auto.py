@@ -59,15 +59,17 @@ class KorailAutoGUI:
             discord = notification.get('discord', {})
 
             if not discord.get('enabled', False):
+                print("[Discord] 알림이 비활성화되어 있습니다. (notification.discord.enabled = false)")
                 return
 
             webhook_url = discord.get('webhook_url', '')
             if not webhook_url:
+                print("[Discord] 웹훅 URL이 설정되지 않았습니다. (notification.discord.webhook_url)")
                 return
 
             now = datetime.now()
             message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(text)}"}
-            response = requests.post(webhook_url, data=message)
+            response = requests.post(webhook_url, json=message, timeout=10)
             print(f"[Discord] 메시지 전송 완료 (상태: {response.status_code})")
 
         except Exception as e:
