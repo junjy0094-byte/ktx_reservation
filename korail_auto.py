@@ -675,9 +675,9 @@ class KorailAutoGUI:
         print()
         print("[ 동작 순서 ]")
         print("1. 조회하기 클릭")
-        print("2. 각 열차별 예약하기 → 예매 버튼 클릭")
-        print("3. 색상 변화로 로딩 완료 감지 → 성공 시 종료")
-        print("4. 모든 열차 실패 시 새로고침 후 반복")
+        print("2. 각 열차별 예약하기 → 예매 버튼 빠르게 클릭")
+        print("3. 대기 후 새로고침 직전에 성공 여부 확인")
+        print("4. 실패 시 새로고침 후 반복")
         print()
         input("자동 예약을 시작하려면 Enter를 누르세요...")
         print()
@@ -697,51 +697,57 @@ class KorailAutoGUI:
                 time.sleep(self.delay_after_search)
                 print("완료")
 
-                # Step 2: 각 열차별로 예약 시도 (최대 속도)
+                # Step 2: 각 열차별로 예약 시도 (최대 속도, 확인 없이 빠르게)
+                print(f"  [2] {len(reserve_btn_positions)}개 열차 클릭 중...", end=" ", flush=True)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
                     # 예약하기 버튼 클릭
                     self.fast_click(reserve_btn_pos.x, reserve_btn_pos.y)
                     # 예매 버튼 클릭
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
+                print("완료")
 
-                    # 색상 기반 로딩 완료 확인
-                    if self.check_reservation_success_by_color(coord1, coord2, coord3, gray_color, success_color):
-                        reservation_success = True
-                        print(f"\n  [!] {train_idx}번 열차 - 예매 성공!")
-                        print()
-                        print("*" * 60)
-                        print(f"  축하합니다! {train_idx}번 열차 예매 성공!")
-                        print("  결제를 진행해주세요.")
-                        print("*" * 60)
-
-                        # 성공 스크린샷 저장
-                        success_img = self.take_screenshot()
-                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        filename = f"success_{timestamp}.png"
-                        success_img.save(filename)
-                        print(f"[INFO] 성공 스크린샷 저장: {filename}")
-
-                        # 소리 알림
-                        if self.config.get('notification', {}).get('sound', False):
-                            for _ in range(5):
-                                print('\a', end='', flush=True)
-                                time.sleep(0.3)
-
-                        # Discord 알림 (스크린샷 첨부)
-                        self.discord_send_message(
-                            f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!",
-                            image_path=filename
-                        )
-                        break
-
-                if not reservation_success:
-                    print(f"  -> {len(reserve_btn_positions)}개 열차 모두 클릭 완료 (좌석 없음)")
-
-                if reservation_success:
-                    break
-
+                # Step 3: 랜덤 대기
                 delay = self.random_delay()
-                print(f"  [대기] 모든 열차 실패. {delay:.1f}초 후 재시도...")
+                print(f"  [3] {delay:.1f}초 대기 완료")
+
+                # Step 4: 새로고침 직전에 성공 여부 확인 (coord3 색상 체크)
+                print("  [4] 성공 여부 확인...", end=" ", flush=True)
+                color3 = self.get_pixel_color(coord3.x, coord3.y)
+                is_success = self.is_color_similar(color3, success_color, threshold=40)
+
+                if self.debug:
+                    print(f"\n[DEBUG] coord3={color3}, success_color={success_color}, is_success={is_success}")
+
+                if is_success:
+                    reservation_success = True
+                    print("성공!")
+                    print()
+                    print("*" * 60)
+                    print("  축하합니다! 예매 성공!")
+                    print("  결제를 진행해주세요.")
+                    print("*" * 60)
+
+                    # 성공 스크린샷 저장
+                    success_img = self.take_screenshot()
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"success_{timestamp}.png"
+                    success_img.save(filename)
+                    print(f"[INFO] 성공 스크린샷 저장: {filename}")
+
+                    # 소리 알림
+                    if self.config.get('notification', {}).get('sound', False):
+                        for _ in range(5):
+                            print('\a', end='', flush=True)
+                            time.sleep(0.3)
+
+                    # Discord 알림 (스크린샷 첨부)
+                    self.discord_send_message(
+                        f"🎉 KTX 예매 성공! 예매가 완료되었습니다. 결제를 진행해주세요!",
+                        image_path=filename
+                    )
+                    break
+                else:
+                    print("실패 (좌석 없음)")
 
             except pyautogui.FailSafeException:
                 print("\n[중단] 안전장치 작동 - 마우스가 화면 모서리로 이동됨")
