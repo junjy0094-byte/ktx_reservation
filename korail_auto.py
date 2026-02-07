@@ -163,23 +163,27 @@ class KorailAutoGUI:
             detection = self.config.get('automation', {}).get('detection', {})
             coord1 = detection.get('coord1', {})
             coord2 = detection.get('coord2', {})
+            coord3 = detection.get('coord3', {})
             gray_color = detection.get('gray_color', {'r': 128, 'g': 128, 'b': 128})
+            success_color = detection.get('success_color', {'r': 0, 'g': 0, 'b': 0})
 
             from collections import namedtuple
             Point = namedtuple('Point', ['x', 'y'])
 
-            if coord1.get('x', 0) == 0 or coord2.get('x', 0) == 0:
-                return None, None, None
+            if coord1.get('x', 0) == 0 or coord2.get('x', 0) == 0 or coord3.get('x', 0) == 0:
+                return None, None, None, None, None
 
             return (
                 Point(coord1['x'], coord1['y']),
                 Point(coord2['x'], coord2['y']),
-                (gray_color['r'], gray_color['g'], gray_color['b'])
+                Point(coord3['x'], coord3['y']),
+                (gray_color['r'], gray_color['g'], gray_color['b']),
+                (success_color['r'], success_color['g'], success_color['b'])
             )
         except:
-            return None, None, None
+            return None, None, None, None, None
 
-    def save_detection_config(self, coord1, coord2, gray_color):
+    def save_detection_config(self, coord1, coord2, coord3, gray_color, success_color):
         """로딩 감지 좌표 및 색상 설정 저장"""
         if 'automation' not in self.config:
             self.config['automation'] = {}
@@ -189,7 +193,9 @@ class KorailAutoGUI:
         detection = self.config['automation']['detection']
         detection['coord1'] = {'x': coord1.x, 'y': coord1.y}
         detection['coord2'] = {'x': coord2.x, 'y': coord2.y}
+        detection['coord3'] = {'x': coord3.x, 'y': coord3.y}
         detection['gray_color'] = {'r': gray_color[0], 'g': gray_color[1], 'b': gray_color[2]}
+        detection['success_color'] = {'r': success_color[0], 'g': success_color[1], 'b': success_color[2]}
 
         self._save_config()
         print("[INFO] 로딩 감지 설정이 config.yaml에 저장되었습니다.")
@@ -197,7 +203,7 @@ class KorailAutoGUI:
     def wait_for_loading_complete(self, coord1, coord2, gray_color, timeout: float = 10.0) -> bool:
         """
         로딩 완료 대기
-        - 로딩 중: coord1=흰색 AND coord2=회색
+        - 로딩 중: coord1=흰색 AND coord2=회색 아님
         - 로딩 완료: coord1=흰색 아님 AND coord2=흰색
         """
         start_time = time.time()
@@ -227,11 +233,12 @@ class KorailAutoGUI:
         print("[WARNING] 로딩 타임아웃")
         return False
 
-    def check_reservation_success_by_color(self, coord1, coord2, gray_color) -> bool:
+    def check_reservation_success_by_color(self, coord1, coord2, coord3, gray_color, success_color) -> bool:
         """
         예매 성공 여부 확인 (색상 기반)
-        - 로딩 중: coord1=흰색 AND coord2=회색
-        - 성공: coord1=흰색 아님 AND coord2=흰색
+        - 로딩 중: coord1=흰색 AND coord2=회색 아님
+        - 로딩 완료: coord1=흰색 아님 AND coord2=흰색
+        - 성공: coord3=특정색
         """
         color1 = self.get_pixel_color(coord1.x, coord1.y)
         color2 = self.get_pixel_color(coord2.x, coord2.y)
@@ -241,18 +248,28 @@ class KorailAutoGUI:
         is_coord2_gray = self.is_color_similar(color2, gray_color, threshold=40)
 
         if self.debug:
-            print(f"[DEBUG] 성공확인 - coord1={color1} (white:{is_coord1_white}), coord2={color2} (white:{is_coord2_white}, gray:{is_coord2_gray})")
+            print(f"[DEBUG] 확인 - coord1={color1} (white:{is_coord1_white}), coord2={color2} (white:{is_coord2_white}, gray:{is_coord2_gray})")
 
-        # 로딩 중 상태인지 확인
-        if is_coord1_white and is_coord2_gray:
+        # 로딩 중 상태인지 확인: coord1=흰색 AND coord2=회색 아님
+        if is_coord1_white and not is_coord2_gray:
             # 로딩 완료까지 대기
             if self.wait_for_loading_complete(coord1, coord2, gray_color):
-                return True
+                # 로딩 완료 후 coord3 색상 확인
+                color3 = self.get_pixel_color(coord3.x, coord3.y)
+                is_success = self.is_color_similar(color3, success_color, threshold=40)
+                if self.debug:
+                    print(f"[DEBUG] coord3={color3}, success_color={success_color}, is_success={is_success}")
+                return is_success
             return False
 
-        # 이미 로딩 완료 상태 (성공)
+        # 이미 로딩 완료 상태
         if not is_coord1_white and is_coord2_white:
-            return True
+            # coord3 색상 확인
+            color3 = self.get_pixel_color(coord3.x, coord3.y)
+            is_success = self.is_color_similar(color3, success_color, threshold=40)
+            if self.debug:
+                print(f"[DEBUG] coord3={color3}, success_color={success_color}, is_success={is_success}")
+            return is_success
 
         return False
 
@@ -536,11 +553,12 @@ class KorailAutoGUI:
     def setup_detection_coordinates(self):
         """로딩 감지용 좌표 설정"""
         print("\n[ 로딩 감지 좌표 설정 ]")
-        print("로딩 상태를 감지하기 위한 두 좌표를 설정합니다.")
+        print("로딩 상태를 감지하기 위한 좌표를 설정합니다.")
         print()
         print("[ 설명 ]")
-        print("- 좌표1: 로딩 중에는 흰색, 로딩 완료 후에는 다른 색이 되는 위치")
-        print("- 좌표2: 로딩 중에는 회색, 로딩 완료 후에는 흰색이 되는 위치")
+        print("- 좌표1: 로딩 중=흰색, 로딩 완료=다른 색")
+        print("- 좌표2: 로딩 완료=흰색 (회색 색상 지정 필요)")
+        print("- 좌표3: 성공 시 특정 색상이 되는 위치")
         print()
 
         # 좌표1 설정
@@ -554,7 +572,7 @@ class KorailAutoGUI:
         # 좌표2 설정
         print()
         print("2. '좌표2' 위치에 마우스를 올려놓고 Enter를 누르세요...")
-        print("   (로딩 중=회색, 로딩 완료=흰색)")
+        print("   (로딩 완료=흰색)")
         input()
         coord2 = pyautogui.position()
         color2 = self.get_pixel_color(coord2.x, coord2.y)
@@ -562,8 +580,8 @@ class KorailAutoGUI:
 
         # 회색 색상 설정
         print()
-        print("3. 로딩 중일 때 좌표2의 회색 색상을 지정해주세요.")
-        print("   (현재 좌표2 색상을 회색으로 사용하려면 Enter, 직접 입력하려면 R,G,B 형식으로 입력)")
+        print("3. 좌표2의 '회색' 색상을 지정해주세요.")
+        print("   (현재 좌표2 색상을 사용하려면 Enter, 직접 입력하려면 R,G,B 형식으로 입력)")
         gray_input = input("   회색 RGB (예: 128,128,128): ").strip()
 
         if gray_input:
@@ -578,10 +596,37 @@ class KorailAutoGUI:
 
         print(f"   -> 회색 색상: RGB{gray_color}")
 
-        # 저장
-        self.save_detection_config(coord1, coord2, gray_color)
+        # 좌표3 설정
+        print()
+        print("4. '좌표3' 위치에 마우스를 올려놓고 Enter를 누르세요...")
+        print("   (성공 시 특정 색상이 되는 위치)")
+        input()
+        coord3 = pyautogui.position()
+        color3 = self.get_pixel_color(coord3.x, coord3.y)
+        print(f"   -> 좌표3: ({coord3.x}, {coord3.y}) - 현재 색상: RGB{color3}")
 
-        return coord1, coord2, gray_color
+        # 성공 색상 설정
+        print()
+        print("5. 좌표3의 '성공 색상'을 지정해주세요.")
+        print("   (현재 좌표3 색상을 사용하려면 Enter, 직접 입력하려면 R,G,B 형식으로 입력)")
+        success_input = input("   성공 색상 RGB (예: 255,0,0): ").strip()
+
+        if success_input:
+            try:
+                parts = success_input.split(',')
+                success_color = (int(parts[0]), int(parts[1]), int(parts[2]))
+            except:
+                print("   [경고] 잘못된 형식, 현재 좌표3 색상을 사용합니다.")
+                success_color = color3
+        else:
+            success_color = color3
+
+        print(f"   -> 성공 색상: RGB{success_color}")
+
+        # 저장
+        self.save_detection_config(coord1, coord2, coord3, gray_color, success_color)
+
+        return coord1, coord2, coord3, gray_color, success_color
 
     def print_coordinates_info(self, search_btn_pos, reserve_btn_positions, confirm_btn_pos):
         """좌표 정보 출력"""
@@ -608,18 +653,21 @@ class KorailAutoGUI:
         max_attempts = self.config['reservation']['max_attempts']
 
         # 로딩 감지 좌표 확인/설정
-        coord1, coord2, gray_color = self.load_detection_config()
-        if coord1 is None:
+        result = self.load_detection_config()
+        if result[0] is None:
             print("\n[INFO] 로딩 감지 좌표가 설정되지 않았습니다.")
-            coord1, coord2, gray_color = self.setup_detection_coordinates()
+            coord1, coord2, coord3, gray_color, success_color = self.setup_detection_coordinates()
         else:
+            coord1, coord2, coord3, gray_color, success_color = result
             print(f"\n[INFO] 로딩 감지 좌표 로드됨")
             print(f"  - 좌표1: ({coord1.x}, {coord1.y})")
             print(f"  - 좌표2: ({coord2.x}, {coord2.y})")
+            print(f"  - 좌표3: ({coord3.x}, {coord3.y})")
             print(f"  - 회색: RGB{gray_color}")
+            print(f"  - 성공색: RGB{success_color}")
             choice = input("이 설정을 사용할까요? (y/n): ").strip().lower()
             if choice != 'y':
-                coord1, coord2, gray_color = self.setup_detection_coordinates()
+                coord1, coord2, coord3, gray_color, success_color = self.setup_detection_coordinates()
 
         print(f"\n[INFO] 최대 시도 횟수: {max_attempts}회")
         print(f"[INFO] 등록된 열차: {len(reserve_btn_positions)}개 (순서대로 시도)")
@@ -657,7 +705,7 @@ class KorailAutoGUI:
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
 
                     # 색상 기반 로딩 완료 확인
-                    if self.check_reservation_success_by_color(coord1, coord2, gray_color):
+                    if self.check_reservation_success_by_color(coord1, coord2, coord3, gray_color, success_color):
                         reservation_success = True
                         print(f"\n  [!] {train_idx}번 열차 - 예매 성공!")
                         print()
