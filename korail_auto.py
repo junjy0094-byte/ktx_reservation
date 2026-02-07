@@ -472,8 +472,9 @@ class KorailAutoGUI:
         return False
 
     def fast_click(self, x: int, y: int):
-        """빠른 클릭 (최소 대기)"""
+        """빠른 클릭 (0.05초 딜레이)"""
         pyautogui.click(x, y)
+        time.sleep(0.05)
 
     def wait_for_user_setup(self):
         """사용자가 브라우저 설정을 완료할 때까지 대기"""
