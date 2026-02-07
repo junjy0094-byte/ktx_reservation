@@ -17,6 +17,7 @@ import pyperclip
 import subprocess
 import platform
 import requests
+import io
 from datetime import datetime
 from PIL import ImageGrab
 
@@ -55,8 +56,8 @@ class KorailAutoGUI:
         with open(self.config_path, 'w', encoding='utf-8') as f:
             yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
 
-    def discord_send_message(self, text: str):
-        """Discord 웹훅으로 메시지 전송"""
+    def discord_send_message(self, text: str, image_path: str = None):
+        """Discord 웹훅으로 메시지 전송 (이미지 첨부 가능)"""
         try:
             notification = self.config.get('notification', {})
             discord = notification.get('discord', {})
@@ -71,8 +72,19 @@ class KorailAutoGUI:
                 return
 
             now = datetime.now()
-            message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(text)}"}
-            response = requests.post(webhook_url, json=message, timeout=10)
+            content = f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(text)}"
+
+            if image_path:
+                # 이미지와 함께 전송
+                with open(image_path, 'rb') as f:
+                    files = {'file': (image_path, f, 'image/png')}
+                    data = {'content': content}
+                    response = requests.post(webhook_url, data=data, files=files, timeout=30)
+            else:
+                # 텍스트만 전송
+                message = {"content": content}
+                response = requests.post(webhook_url, json=message, timeout=10)
+
             print(f"[Discord] 메시지 전송 완료 (상태: {response.status_code})")
 
         except Exception as e:
@@ -130,6 +142,119 @@ class KorailAutoGUI:
         """저장된 좌표가 있는지 확인"""
         search, reserve, confirm = self.load_coordinates()
         return search is not None and reserve is not None and confirm is not None
+
+    def get_pixel_color(self, x: int, y: int) -> tuple:
+        """특정 좌표의 픽셀 색상 가져오기 (RGB)"""
+        img = ImageGrab.grab(bbox=(x, y, x + 1, y + 1))
+        return img.getpixel((0, 0))[:3]
+
+    def is_color_white(self, color: tuple, threshold: int = 30) -> bool:
+        """색상이 흰색인지 확인 (RGB 각각 225 이상)"""
+        return color[0] >= (255 - threshold) and color[1] >= (255 - threshold) and color[2] >= (255 - threshold)
+
+    def is_color_similar(self, color1: tuple, color2: tuple, threshold: int = 30) -> bool:
+        """두 색상이 비슷한지 확인"""
+        diff = abs(color1[0] - color2[0]) + abs(color1[1] - color2[1]) + abs(color1[2] - color2[2])
+        return diff <= threshold
+
+    def load_detection_config(self):
+        """로딩 감지 좌표 및 색상 설정 불러오기"""
+        try:
+            detection = self.config.get('automation', {}).get('detection', {})
+            coord1 = detection.get('coord1', {})
+            coord2 = detection.get('coord2', {})
+            gray_color = detection.get('gray_color', {'r': 128, 'g': 128, 'b': 128})
+
+            from collections import namedtuple
+            Point = namedtuple('Point', ['x', 'y'])
+
+            if coord1.get('x', 0) == 0 or coord2.get('x', 0) == 0:
+                return None, None, None
+
+            return (
+                Point(coord1['x'], coord1['y']),
+                Point(coord2['x'], coord2['y']),
+                (gray_color['r'], gray_color['g'], gray_color['b'])
+            )
+        except:
+            return None, None, None
+
+    def save_detection_config(self, coord1, coord2, gray_color):
+        """로딩 감지 좌표 및 색상 설정 저장"""
+        if 'automation' not in self.config:
+            self.config['automation'] = {}
+        if 'detection' not in self.config['automation']:
+            self.config['automation']['detection'] = {}
+
+        detection = self.config['automation']['detection']
+        detection['coord1'] = {'x': coord1.x, 'y': coord1.y}
+        detection['coord2'] = {'x': coord2.x, 'y': coord2.y}
+        detection['gray_color'] = {'r': gray_color[0], 'g': gray_color[1], 'b': gray_color[2]}
+
+        self._save_config()
+        print("[INFO] 로딩 감지 설정이 config.yaml에 저장되었습니다.")
+
+    def wait_for_loading_complete(self, coord1, coord2, gray_color, timeout: float = 10.0) -> bool:
+        """
+        로딩 완료 대기
+        - 로딩 중: coord1=흰색 AND coord2=회색
+        - 로딩 완료: coord1=흰색 아님 AND coord2=흰색
+        """
+        start_time = time.time()
+        check_count = 0
+
+        while time.time() - start_time < timeout:
+            color1 = self.get_pixel_color(coord1.x, coord1.y)
+            color2 = self.get_pixel_color(coord2.x, coord2.y)
+
+            is_coord1_white = self.is_color_white(color1)
+            is_coord2_white = self.is_color_white(color2)
+            is_coord2_gray = self.is_color_similar(color2, gray_color, threshold=40)
+
+            if self.debug:
+                check_count += 1
+                if check_count % 10 == 0:  # 10번에 한 번만 출력
+                    print(f"[DEBUG] coord1={color1} (white:{is_coord1_white}), coord2={color2} (white:{is_coord2_white}, gray:{is_coord2_gray})")
+
+            # 로딩 완료 조건: coord1이 흰색 아님 AND coord2가 흰색
+            if not is_coord1_white and is_coord2_white:
+                if self.debug:
+                    print(f"[DEBUG] 로딩 완료! coord1={color1}, coord2={color2}")
+                return True
+
+            time.sleep(0.05)  # 50ms 간격으로 확인
+
+        print("[WARNING] 로딩 타임아웃")
+        return False
+
+    def check_reservation_success_by_color(self, coord1, coord2, gray_color) -> bool:
+        """
+        예매 성공 여부 확인 (색상 기반)
+        - 로딩 중: coord1=흰색 AND coord2=회색
+        - 성공: coord1=흰색 아님 AND coord2=흰색
+        """
+        color1 = self.get_pixel_color(coord1.x, coord1.y)
+        color2 = self.get_pixel_color(coord2.x, coord2.y)
+
+        is_coord1_white = self.is_color_white(color1)
+        is_coord2_white = self.is_color_white(color2)
+        is_coord2_gray = self.is_color_similar(color2, gray_color, threshold=40)
+
+        if self.debug:
+            print(f"[DEBUG] 성공확인 - coord1={color1} (white:{is_coord1_white}), coord2={color2} (white:{is_coord2_white}, gray:{is_coord2_gray})")
+
+        # 로딩 중 상태인지 확인
+        if is_coord1_white and is_coord2_gray:
+            # 로딩 완료까지 대기
+            if self.wait_for_loading_complete(coord1, coord2, gray_color):
+                return True
+            return False
+
+        # 이미 로딩 완료 상태 (성공)
+        if not is_coord1_white and is_coord2_white:
+            return True
+
+        return False
 
     def random_delay(self, min_sec: float = None, max_sec: float = None):
         """랜덤 대기 시간"""
@@ -408,6 +533,56 @@ class KorailAutoGUI:
 
         return search_btn_pos, reserve_btn_positions, confirm_btn_pos
 
+    def setup_detection_coordinates(self):
+        """로딩 감지용 좌표 설정"""
+        print("\n[ 로딩 감지 좌표 설정 ]")
+        print("로딩 상태를 감지하기 위한 두 좌표를 설정합니다.")
+        print()
+        print("[ 설명 ]")
+        print("- 좌표1: 로딩 중에는 흰색, 로딩 완료 후에는 다른 색이 되는 위치")
+        print("- 좌표2: 로딩 중에는 회색, 로딩 완료 후에는 흰색이 되는 위치")
+        print()
+
+        # 좌표1 설정
+        print("1. '좌표1' 위치에 마우스를 올려놓고 Enter를 누르세요...")
+        print("   (로딩 중=흰색, 로딩 완료=다른 색)")
+        input()
+        coord1 = pyautogui.position()
+        color1 = self.get_pixel_color(coord1.x, coord1.y)
+        print(f"   -> 좌표1: ({coord1.x}, {coord1.y}) - 현재 색상: RGB{color1}")
+
+        # 좌표2 설정
+        print()
+        print("2. '좌표2' 위치에 마우스를 올려놓고 Enter를 누르세요...")
+        print("   (로딩 중=회색, 로딩 완료=흰색)")
+        input()
+        coord2 = pyautogui.position()
+        color2 = self.get_pixel_color(coord2.x, coord2.y)
+        print(f"   -> 좌표2: ({coord2.x}, {coord2.y}) - 현재 색상: RGB{color2}")
+
+        # 회색 색상 설정
+        print()
+        print("3. 로딩 중일 때 좌표2의 회색 색상을 지정해주세요.")
+        print("   (현재 좌표2 색상을 회색으로 사용하려면 Enter, 직접 입력하려면 R,G,B 형식으로 입력)")
+        gray_input = input("   회색 RGB (예: 128,128,128): ").strip()
+
+        if gray_input:
+            try:
+                parts = gray_input.split(',')
+                gray_color = (int(parts[0]), int(parts[1]), int(parts[2]))
+            except:
+                print("   [경고] 잘못된 형식, 현재 좌표2 색상을 사용합니다.")
+                gray_color = color2
+        else:
+            gray_color = color2
+
+        print(f"   -> 회색 색상: RGB{gray_color}")
+
+        # 저장
+        self.save_detection_config(coord1, coord2, gray_color)
+
+        return coord1, coord2, gray_color
+
     def print_coordinates_info(self, search_btn_pos, reserve_btn_positions, confirm_btn_pos):
         """좌표 정보 출력"""
         print()
@@ -429,17 +604,31 @@ class KorailAutoGUI:
         print(f"  - 화면 확인: {self.delay_screen_check}초")
 
     def run_reservation_loop(self, search_btn_pos, reserve_btn_positions, confirm_btn_pos):
-        """예약 루프 실행"""
+        """예약 루프 실행 (색상 기반 감지)"""
         max_attempts = self.config['reservation']['max_attempts']
 
-        print(f"[INFO] 최대 시도 횟수: {max_attempts}회")
+        # 로딩 감지 좌표 확인/설정
+        coord1, coord2, gray_color = self.load_detection_config()
+        if coord1 is None:
+            print("\n[INFO] 로딩 감지 좌표가 설정되지 않았습니다.")
+            coord1, coord2, gray_color = self.setup_detection_coordinates()
+        else:
+            print(f"\n[INFO] 로딩 감지 좌표 로드됨")
+            print(f"  - 좌표1: ({coord1.x}, {coord1.y})")
+            print(f"  - 좌표2: ({coord2.x}, {coord2.y})")
+            print(f"  - 회색: RGB{gray_color}")
+            choice = input("이 설정을 사용할까요? (y/n): ").strip().lower()
+            if choice != 'y':
+                coord1, coord2, gray_color = self.setup_detection_coordinates()
+
+        print(f"\n[INFO] 최대 시도 횟수: {max_attempts}회")
         print(f"[INFO] 등록된 열차: {len(reserve_btn_positions)}개 (순서대로 시도)")
         self.print_delay_info()
         print()
         print("[ 동작 순서 ]")
         print("1. 조회하기 클릭")
-        print("2. 각 열차별 예약하기 → 예매 버튼 순서대로 시도")
-        print("3. 화면 변화 확인 → 성공 시 종료, 실패 시 다음 열차 시도")
+        print("2. 각 열차별 예약하기 → 예매 버튼 클릭")
+        print("3. 색상 변화로 로딩 완료 감지 → 성공 시 종료")
         print("4. 모든 열차 실패 시 새로고침 후 반복")
         print()
         input("자동 예약을 시작하려면 Enter를 누르세요...")
@@ -447,7 +636,6 @@ class KorailAutoGUI:
 
         attempt = 0
         reservation_success = False
-        baseline_captured = False
 
         while attempt < max_attempts and not reservation_success:
             attempt += 1
@@ -461,11 +649,6 @@ class KorailAutoGUI:
                 time.sleep(self.delay_after_search)
                 print("완료")
 
-                # 기준 스크린샷 저장 (최초 1회만)
-                if not baseline_captured:
-                    self.capture_baseline()
-                    baseline_captured = True
-
                 # Step 2: 각 열차별로 예약 시도 (최대 속도)
                 for train_idx, reserve_btn_pos in enumerate(reserve_btn_positions, 1):
                     # 예약하기 버튼 클릭
@@ -473,10 +656,10 @@ class KorailAutoGUI:
                     # 예매 버튼 클릭
                     self.fast_click(confirm_btn_pos.x, confirm_btn_pos.y)
 
-                    # 화면 변화 확인 (기준 스크린샷과 비교)
-                    if self.check_reservation_success(confirm_btn_pos):
+                    # 색상 기반 로딩 완료 확인
+                    if self.check_reservation_success_by_color(coord1, coord2, gray_color):
                         reservation_success = True
-                        print(f"\n  [!] {train_idx}번 열차 - 화면 변화 감지!")
+                        print(f"\n  [!] {train_idx}번 열차 - 예매 성공!")
                         print()
                         print("*" * 60)
                         print(f"  축하합니다! {train_idx}번 열차 예매 성공!")
@@ -496,9 +679,10 @@ class KorailAutoGUI:
                                 print('\a', end='', flush=True)
                                 time.sleep(0.3)
 
-                        # Discord 알림
+                        # Discord 알림 (스크린샷 첨부)
                         self.discord_send_message(
-                            f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!"
+                            f"🎉 KTX 예매 성공! {train_idx}번 열차 예매가 완료되었습니다. 결제를 진행해주세요!",
+                            image_path=filename
                         )
                         break
 
