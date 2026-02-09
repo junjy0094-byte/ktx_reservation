@@ -47,6 +47,34 @@ automation:
 browser:
   use_existing_profile: false    # true: 기존 Chrome 프로필 사용 (로그인 유지됨)
 
+# 결제 자동화 설정 (선택사항)
+# 예매 성공 후 카드 결제를 자동으로 진행합니다.
+# actions 리스트에 순서대로 동작을 정의합니다.
+# 지원 동작 타입:
+#   - click: 특정 좌표 클릭 (x, y 필요)
+#   - press: 키보드 키 누르기 (key 필요, 예: tab, enter, space, f5 등)
+#   - typewrite: 텍스트 입력 (text 필요, 영문/숫자만 가능)
+#   - hotkey: 단축키 (keys 필요, 예: [ctrl, a])
+# 각 동작에 delay_after(초)를 지정하면 해당 동작 후 대기합니다.
+payment:
+  enabled: false                   # 결제 자동화 사용 여부
+  actions: []                      # 결제 동작 리스트 (setup_payment_actions로 설정)
+  # 예시:
+  # actions:
+  #   - type: click
+  #     x: 500
+  #     y: 300
+  #     delay_after: 1.0
+  #   - type: press
+  #     key: tab
+  #     delay_after: 0.3
+  #   - type: typewrite
+  #     text: "1234567890123456"
+  #     delay_after: 0.5
+  #   - type: press
+  #     key: enter
+  #     delay_after: 1.0
+
 # 알림 설정 (선택사항)
 notification:
   sound: true                    # 예약 성공시 소리 알림

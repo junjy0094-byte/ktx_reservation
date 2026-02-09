@@ -90,6 +90,203 @@ class KorailAutoGUI:
         except Exception as e:
             print(f"[Discord] 메시지 전송 실패: {e}")
 
+    # ==================== 결제 자동화 ====================
+
+    def load_payment_actions(self) -> list:
+        """설정 파일에서 결제 동작 리스트 로드"""
+        payment = self.config.get('payment', {})
+        if not payment.get('enabled', False):
+            return []
+        return payment.get('actions', [])
+
+    def save_payment_actions(self, actions: list):
+        """결제 동작 리스트를 설정 파일에 저장"""
+        if 'payment' not in self.config:
+            self.config['payment'] = {}
+        self.config['payment']['enabled'] = True
+        self.config['payment']['actions'] = actions
+        self._save_config()
+        print("[INFO] 결제 동작이 config.yaml에 저장되었습니다.")
+
+    def execute_payment_actions(self):
+        """저장된 결제 동작을 순서대로 실행"""
+        actions = self.load_payment_actions()
+        if not actions:
+            print("[INFO] 결제 동작이 설정되지 않았거나 비활성화 상태입니다.")
+            return False
+
+        print(f"\n[결제] {len(actions)}개의 결제 동작을 실행합니다...")
+        for i, action in enumerate(actions, 1):
+            action_type = action.get('type', '')
+            delay_after = action.get('delay_after', 0.3)
+
+            try:
+                if action_type == 'click':
+                    x, y = action['x'], action['y']
+                    print(f"  [{i}] 클릭 ({x}, {y})", end=" ", flush=True)
+                    pyautogui.click(x, y)
+
+                elif action_type == 'press':
+                    key = action['key']
+                    print(f"  [{i}] 키 누름: {key}", end=" ", flush=True)
+                    pyautogui.press(key)
+
+                elif action_type == 'typewrite':
+                    text = action['text']
+                    display_text = text[:4] + "****" if len(text) > 4 else text
+                    print(f"  [{i}] 텍스트 입력: {display_text}", end=" ", flush=True)
+                    pyperclip.copy(text)
+                    pyautogui.hotkey('ctrl', 'v')
+
+                elif action_type == 'hotkey':
+                    keys = action['keys']
+                    print(f"  [{i}] 단축키: {'+'.join(keys)}", end=" ", flush=True)
+                    pyautogui.hotkey(*keys)
+
+                else:
+                    print(f"  [{i}] 알 수 없는 동작: {action_type}")
+                    continue
+
+                time.sleep(delay_after)
+                print("완료")
+
+            except Exception as e:
+                print(f"실패 ({e})")
+                return False
+
+        print("[결제] 모든 결제 동작 완료!")
+        return True
+
+    def setup_payment_actions(self):
+        """대화형으로 결제 동작 설정"""
+        print("\n" + "=" * 60)
+        print("  결제 동작 설정")
+        print("=" * 60)
+        print()
+        print("예매 성공 후 자동으로 실행할 결제 동작을 순서대로 등록합니다.")
+        print()
+        print("[ 동작 타입 ]")
+        print("  1. click     - 화면 클릭 (마우스 위치 자동 감지)")
+        print("  2. press     - 키보드 키 누르기 (tab, enter 등)")
+        print("  3. typewrite - 텍스트 입력 (카드번호, 비밀번호 등)")
+        print("  4. hotkey    - 단축키 (ctrl+a 등)")
+        print()
+        print("  q: 등록 완료")
+        print("  d: 마지막 동작 삭제")
+        print("  l: 현재 등록된 동작 목록 보기")
+        print()
+
+        actions = []
+        step = 1
+
+        while True:
+            print(f"\n--- [{step}번째 동작] ---")
+            print("타입 선택 (1:click / 2:press / 3:typewrite / 4:hotkey / q:완료 / d:삭제 / l:목록): ", end="")
+            choice = input().strip().lower()
+
+            if choice == 'q':
+                break
+            elif choice == 'd':
+                if actions:
+                    removed = actions.pop()
+                    step -= 1
+                    print(f"  -> 삭제됨: {removed['type']}")
+                else:
+                    print("  -> 삭제할 동작이 없습니다.")
+                continue
+            elif choice == 'l':
+                self._print_payment_actions(actions)
+                continue
+
+            # 동작 후 대기 시간
+            delay_input = input("  동작 후 대기 시간 (초, 기본값 0.5): ").strip()
+            try:
+                delay_after = float(delay_input) if delay_input else 0.5
+            except ValueError:
+                delay_after = 0.5
+
+            if choice == '1':
+                # 클릭
+                print("  클릭할 위치에 마우스를 올려놓고 Enter를 누르세요...")
+                input()
+                pos = pyautogui.position()
+                action = {'type': 'click', 'x': pos.x, 'y': pos.y, 'delay_after': delay_after}
+                print(f"  -> 클릭 좌표: ({pos.x}, {pos.y})")
+
+            elif choice == '2':
+                # 키 누르기
+                print("  누를 키를 입력하세요 (예: tab, enter, space, backspace, f5):")
+                key = input("  키: ").strip().lower()
+                if not key:
+                    print("  -> 취소됨")
+                    continue
+                action = {'type': 'press', 'key': key, 'delay_after': delay_after}
+                print(f"  -> 키: {key}")
+
+            elif choice == '3':
+                # 텍스트 입력
+                print("  입력할 텍스트를 입력하세요 (카드번호, 비밀번호 등):")
+                text = input("  텍스트: ").strip()
+                if not text:
+                    print("  -> 취소됨")
+                    continue
+                action = {'type': 'typewrite', 'text': text, 'delay_after': delay_after}
+                display = text[:4] + "****" if len(text) > 4 else text
+                print(f"  -> 텍스트: {display}")
+
+            elif choice == '4':
+                # 단축키
+                print("  단축키를 입력하세요 (쉼표로 구분, 예: ctrl,a 또는 ctrl,v):")
+                keys_input = input("  단축키: ").strip().lower()
+                if not keys_input:
+                    print("  -> 취소됨")
+                    continue
+                keys = [k.strip() for k in keys_input.split(',')]
+                action = {'type': 'hotkey', 'keys': keys, 'delay_after': delay_after}
+                print(f"  -> 단축키: {'+'.join(keys)}")
+
+            else:
+                print("  -> 잘못된 선택입니다.")
+                continue
+
+            actions.append(action)
+            step += 1
+
+        if actions:
+            self._print_payment_actions(actions)
+            save_choice = input("\n이 동작들을 저장할까요? (y/n): ").strip().lower()
+            if save_choice == 'y':
+                self.save_payment_actions(actions)
+            else:
+                print("[INFO] 저장하지 않았습니다.")
+        else:
+            print("[INFO] 등록된 동작이 없습니다.")
+
+        return actions
+
+    def _print_payment_actions(self, actions: list):
+        """결제 동작 목록 출력"""
+        if not actions:
+            print("\n  (등록된 동작 없음)")
+            return
+
+        print(f"\n[ 등록된 결제 동작: {len(actions)}개 ]")
+        for i, action in enumerate(actions, 1):
+            action_type = action['type']
+            delay = action.get('delay_after', 0.3)
+            if action_type == 'click':
+                print(f"  {i}. 클릭 ({action['x']}, {action['y']}) - {delay}초 대기")
+            elif action_type == 'press':
+                print(f"  {i}. 키 누름: {action['key']} - {delay}초 대기")
+            elif action_type == 'typewrite':
+                text = action['text']
+                display = text[:4] + "****" if len(text) > 4 else text
+                print(f"  {i}. 텍스트 입력: {display} - {delay}초 대기")
+            elif action_type == 'hotkey':
+                print(f"  {i}. 단축키: {'+'.join(action['keys'])} - {delay}초 대기")
+
+    # ==================== 좌표 관리 ====================
+
     def save_coordinates(self, search_btn, reserve_btns, confirm_btn):
         """좌표를 설정 파일에 저장"""
         if 'automation' not in self.config:
@@ -735,6 +932,17 @@ class KorailAutoGUI:
                     success_img.save(filename)
                     print(f"[INFO] 성공 스크린샷 저장: {filename}")
 
+                    # 결제 자동화 실행
+                    payment_result = self.execute_payment_actions()
+
+                    # 결제 완료 후 스크린샷 (결제 동작이 있었다면)
+                    if payment_result:
+                        time.sleep(1.0)
+                        payment_img = self.take_screenshot()
+                        payment_filename = f"payment_{timestamp}.png"
+                        payment_img.save(payment_filename)
+                        print(f"[INFO] 결제 후 스크린샷 저장: {payment_filename}")
+
                     # 소리 알림
                     if self.config.get('notification', {}).get('sound', False):
                         for _ in range(5):
@@ -742,10 +950,14 @@ class KorailAutoGUI:
                             time.sleep(0.3)
 
                     # Discord 알림 (스크린샷 첨부)
-                    self.discord_send_message(
-                        f"🎉 KTX 예매 성공! 예매가 완료되었습니다. 결제를 진행해주세요!",
-                        image_path=filename
-                    )
+                    discord_msg = "🎉 KTX 예매 성공!"
+                    if payment_result:
+                        discord_msg += " 결제 동작도 완료되었습니다."
+                        discord_image = payment_filename
+                    else:
+                        discord_msg += " 결제를 진행해주세요!"
+                        discord_image = filename
+                    self.discord_send_message(discord_msg, image_path=discord_image)
                     break
                 else:
                     print("실패 (좌석 없음)")
@@ -833,6 +1045,7 @@ class KorailAutoGUI:
         print("1. 좌표 기반 자동 클릭 (추천)")
         print("2. 좌표 새로 설정하기")
         print("3. 단순 새로고침 모드")
+        print("4. 결제 동작 설정")
         print()
 
         if self.has_saved_coordinates():
@@ -840,8 +1053,14 @@ class KorailAutoGUI:
         else:
             print("[INFO] 저장된 좌표가 없습니다. (새로 설정 필요)")
 
+        payment_actions = self.load_payment_actions()
+        if payment_actions:
+            print(f"[INFO] 결제 동작이 {len(payment_actions)}개 설정되어 있습니다.")
+        else:
+            print("[INFO] 결제 동작이 설정되지 않았습니다. (4번으로 설정 가능)")
+
         print()
-        choice = input("선택 (1/2/3): ").strip()
+        choice = input("선택 (1/2/3/4): ").strip()
 
         if choice == "1":
             self.run_with_coordinates()
@@ -850,6 +1069,8 @@ class KorailAutoGUI:
             search_btn_pos, reserve_btn_positions, confirm_btn_pos = self.setup_coordinates()
             self.print_coordinates_info(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
             self.run_reservation_loop(search_btn_pos, reserve_btn_positions, confirm_btn_pos)
+        elif choice == "4":
+            self.setup_payment_actions()
         else:
             self.run_simple_refresh()
 
